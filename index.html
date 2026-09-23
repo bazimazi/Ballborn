@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ballborn</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;520;640;760&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="view" aria-hidden="true"></canvas>
+      <div id="hud" hidden>
+        <header class="hud-top">
+          <div class="meter integrity">
+            <div class="meter-label"><span>Integrity</span><span id="hp-num"></span></div>
+            <div class="track"><div id="hp-bar"></div></div>
+          </div>
+          <div class="objective">
+            <div id="room-name"></div>
+            <div id="room-obj"></div>
+          </div>
+          <div class="resources">
+            <span id="cinders"></span>
+            <span id="embers"></span>
+          </div>
+        </header>
+        <div id="prompt" class="prompt" hidden></div>
+        <footer class="hud-bottom">
+          <div id="slots" class="slots"></div>
+          <div class="ability-readout">
+            <div id="ability-name">Ability</div>
+            <div class="track slim"><div id="ability-bar"></div></div>
+            <div id="energy-num"></div>
+          </div>
+          <div class="readouts">
+            <div id="speed-read"></div>
+            <div id="combo-read"></div>
+            <div id="instability-read"></div>
+          </div>
+        </footer>
+        <aside id="sheet" class="sheet" hidden></aside>
+      </div>
+      <div id="screen"></div>
+      <div id="toasts" aria-live="polite"></div>
+      <div id="live" class="sr-only" aria-live="polite"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
