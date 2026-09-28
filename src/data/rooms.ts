@@ -1,4 +1,5 @@
 import type { HazardDef, PlatformDef, RoomTemplate } from '../types'
+import { deepFreeze } from '../util'
 
 const FY = 608
 
@@ -27,7 +28,7 @@ function room(partial: RoomTemplate): RoomTemplate {
 
 const exitOf = (width: number) => ({ x: width - 96, y: FY - 96, w: 70, h: 96 })
 
-export const ROOMS: RoomTemplate[] = [
+export const ROOMS: RoomTemplate[] = deepFreeze([
   room({
     id: 'ignition-hall',
     name: 'Ignition Hall',
@@ -119,7 +120,7 @@ export const ROOMS: RoomTemplate[] = [
     height: 720,
     player: { x: 120, y: 480 },
     exit: exitOf(1960),
-    objective: 'Silence the turrets and the bolts.',
+    objective: 'Silence the turrets and the bolts. Rubber at speed, a dash, or a magnet turns their shots around.',
     platforms: [
       floor(-20, 2020),
       plat(480, 572, 64, 36),
@@ -142,18 +143,20 @@ export const ROOMS: RoomTemplate[] = [
     height: 720,
     player: { x: 140, y: 480 },
     exit: exitOf(1760),
-    objective: 'Break the swarm.',
+    objective: 'A low roof over the swarm. Bounce between floor and roof, or wait on the floor for them to dive.',
     platforms: [
       floor(-20, 1820),
-      plat(520, 430, 420),
-      plat(1100, 360, 240),
+      // The roof turns bounce into a weapon; the floor under it stays open for every build.
+      plat(460, 330, 860, 26),
+      plat(860, 460, 80, 36),
+      plat(1440, 470, 180),
     ],
     hazards: [],
     spawns: [
-      { id: 'spark', x: 600, y: 360 },
-      { id: 'spark', x: 760, y: 340 },
-      { id: 'spark', x: 900, y: 380 },
-      { id: 'spark', x: 1200, y: 300 },
+      { id: 'spark', x: 600, y: 420 },
+      { id: 'spark', x: 760, y: 400 },
+      { id: 'spark', x: 1040, y: 420 },
+      { id: 'spark', x: 1200, y: 400 },
       { id: 'grunt', x: 1400, y: 520 },
     ],
   }),
@@ -506,7 +509,7 @@ export const ROOMS: RoomTemplate[] = [
     height: 720,
     player: { x: 120, y: 470 },
     exit: exitOf(1800),
-    objective: 'The yard shifts. Ride it, then break what rides with you.',
+    objective: 'The yard shifts over slag. Time the crossing; if you fall, the slag spits you back up once per touch.',
     platforms: [
       floor(0, 420),
       floor(1280, 540),
@@ -574,10 +577,11 @@ export const ROOMS: RoomTemplate[] = [
       plat(300, 470, 200),
       plat(1040, 430, 170, 22, 'spring'),
     ],
-    hazards: [],
+    // The seam between floors is slag, not a bottomless pit: a missed hop costs integrity.
+    hazards: [lava(760, 100)],
     spawns: [],
   }),
-]
+])
 
 export const ROOM_MAP: Record<string, RoomTemplate> = Object.fromEntries(ROOMS.map((r) => [r.id, r]))
 

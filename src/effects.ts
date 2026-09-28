@@ -1,8 +1,13 @@
-import type { KillKind, Stats, StatusId, Tag } from './types'
+import type { HitInfo, HookEvent, KillKind, Stats, StatusId, Tag } from './types'
 import type { BoundEffect, EffectDef } from './types'
-import type { Rng } from './util'
 
+/**
+ * Anything an effect can hit: regular constructs, the Colossus body, and its
+ * rivets all share this shape, so status, area, chain, and direct damage work
+ * the same everywhere (with explicit boss rules applied by the simulation).
+ */
 export interface FxEnemy {
+  kind: 'enemy' | 'boss' | 'rivet'
   x: number
   y: number
   vx: number
@@ -20,6 +25,7 @@ export interface FxEnemy {
 }
 
 export interface EffectCtx {
+  event: HookEvent
   x: number
   y: number
   nx: number
@@ -41,18 +47,18 @@ export interface EffectApi {
   counters: Map<string, number>
   cooldowns: Map<string, number>
   once: Set<string>
-  rng: Rng
+  rng: () => number
   combo: number
   fxDepth: number
-  enemies: FxEnemy[]
+  targets: () => FxEnemy[]
   discover: (synergyId: string) => void
-  damageEnemy: (e: FxEnemy, amount: number, tags: Tag[], opts?: { pierce?: boolean; kind?: KillKind; source?: 'collision' | 'ability' | 'effect' }) => number
+  damageEnemy: (e: FxEnemy, amount: number, tags: Tag[], info: HitInfo) => number
   heal: (n: number) => void
   addEnergy: (n: number) => void
   addShield: (n: number) => void
-  explode: (x: number, y: number, radius: number, damage: number, hurtSelf: boolean) => void
-  chain: (x: number, y: number, jumps: number, range: number, damage: number) => void
-  attract: (radius: number, strength: number, target: 'projectile' | 'pickup' | 'enemy') => void
+  explode: (x: number, y: number, radius: number, damage: number, hurtSelf: boolean, effectId?: string) => void
+  chain: (x: number, y: number, jumps: number, range: number, damage: number, effectId?: string) => void
+  attract: (radius: number, strength: number, target: 'projectile' | 'pickup' | 'enemy', dt: number) => void
   knockback: (e: FxEnemy, nx: number, ny: number, force: number) => void
   applyStatus: (e: FxEnemy, status: StatusId, duration: number, magnitude: number) => void
   impulse: (along: 'velocity' | 'up' | 'normal', amount: number, nx: number, ny: number) => void
@@ -60,8 +66,11 @@ export interface EffectApi {
   addInstability: (n: number) => void
 }
 
+/** Effects triggered by effects nest at most this deep; kill chains stop there. */
+export const MAX_FX_DEPTH = 3
+
 export function triggerEffects(effects: BoundEffect[], event: EffectDef['event'], api: EffectApi, ctx: EffectCtx): void {
-  if (api.fxDepth > 3) return
+  if (api.fxDepth > MAX_FX_DEPTH) return
   for (const bound of effects) {
     if (bound.effect.event !== event) continue
     runOne(bound, api, ctx)
@@ -72,12 +81,12 @@ function runOne(bound: BoundEffect, api: EffectApi, ctx: EffectCtx): void {
   const effect = bound.effect
   if (effect.minSpeed !== undefined && ctx.speed < effect.minSpeed) return
   if (effect.minSpeedRatio !== undefined && ctx.speed < api.stats.maxSpeed * effect.minSpeedRatio) return
-  if (effect.requiresStatus && ctx.enemy) {
+  if (effect.requiresStatus) {
+    if (!ctx.enemy) return
     if (effect.requiresStatus === 'burn' && ctx.enemy.burn <= 0) return
     if (effect.requiresStatus === 'shock' && ctx.enemy.shock <= 0) return
     if (effect.requiresStatus === 'slow' && ctx.enemy.slow <= 0) return
   }
-  if (effect.requiresStatus && !ctx.enemy) return
   if (effect.requiresKill && effect.requiresKill !== 'any' && ctx.killedBy !== effect.requiresKill) return
   if (effect.everyCombo && (ctx.combo <= 0 || ctx.combo % effect.everyCombo !== 0)) return
   if (effect.chance !== undefined && api.rng() > effect.chance) return
@@ -93,24 +102,28 @@ function runOne(bound: BoundEffect, api: EffectApi, ctx: EffectCtx): void {
   }
   if (bound.synergyId) api.discover(bound.synergyId)
   api.fxDepth++
-  for (const action of effect.actions) applyAction(action, api, ctx)
+  for (const action of effect.actions) applyAction(action, api, ctx, effect.id)
   api.fxDepth--
 }
 
-function applyAction(action: EffectDef['actions'][number], api: EffectApi, ctx: EffectCtx): void {
+function applyAction(action: EffectDef['actions'][number], api: EffectApi, ctx: EffectCtx, effectId: string): void {
   switch (action.type) {
     case 'damage': {
       if (!ctx.enemy) return
       const amount = magnitude(action, api, ctx)
-      api.damageEnemy(ctx.enemy, amount, action.tags ?? ['impact'], { pierce: action.pierce, kind: 'impact', source: 'effect' })
+      // Bonus damage an impact hook adds to the construct it struck is part of
+      // the ram. Anything else an effect deals is effect damage.
+      const source = ctx.event === 'onImpact' ? 'collision' : 'effect'
+      api.damageEnemy(ctx.enemy, amount, action.tags ?? ['impact'], { source, effectId, pierce: action.pierce, kind: 'impact' })
       return
     }
     case 'area': {
       const amount = magnitude(action, api, ctx)
-      for (const e of api.enemies) {
+      for (const e of api.targets()) {
         if (!e.alive) continue
         if (Math.hypot(e.x - ctx.x, e.y - ctx.y) <= action.radius + e.r) {
-          api.damageEnemy(e, amount, action.tags ?? ['area'], { pierce: action.pierce, kind: 'impact', source: 'effect' })
+          api.damageEnemy(e, amount, action.tags ?? ['area'], { source: 'effect', effectId, pierce: action.pierce, kind: 'impact' })
+          if (action.status && e.alive) api.applyStatus(e, action.status.status, action.status.duration, action.status.magnitude)
         }
       }
       return
@@ -119,7 +132,7 @@ function applyAction(action: EffectDef['actions'][number], api: EffectApi, ctx: 
       if (ctx.enemy) api.applyStatus(ctx.enemy, action.status, action.duration, action.magnitude)
       return
     case 'knockback':
-      if (ctx.enemy) api.knockback(ctx.enemy, ctx.nx, ctx.ny, action.force)
+      if (ctx.enemy) api.knockback(ctx.enemy, -ctx.nx, -ctx.ny, action.force)
       return
     case 'heal': {
       const n = action.scale === 'dealt' ? ctx.dealt * action.amount : action.amount
@@ -130,10 +143,10 @@ function applyAction(action: EffectDef['actions'][number], api: EffectApi, ctx: 
       api.addEnergy(action.perSecond ? action.amount * ctx.dt : action.amount)
       return
     case 'explode':
-      api.explode(ctx.x, ctx.y, action.radius, magnitude(action, api, ctx), !!action.hurtSelf)
+      api.explode(ctx.x, ctx.y, action.radius, magnitude(action, api, ctx), !!action.hurtSelf, effectId)
       return
     case 'chain':
-      api.chain(ctx.x, ctx.y, action.jumps, action.range, magnitude(action, api, ctx))
+      api.chain(ctx.x, ctx.y, action.jumps, action.range, magnitude(action, api, ctx), effectId)
       return
     case 'shield':
       api.addShield(action.amount)
@@ -142,7 +155,7 @@ function applyAction(action: EffectDef['actions'][number], api: EffectApi, ctx: 
       api.addInstability(action.amount)
       return
     case 'attract':
-      api.attract(action.radius, action.strength, action.target)
+      api.attract(action.radius, action.strength, action.target, ctx.dt)
       return
     case 'counter': {
       if (action.when === 'grounded' && api.groundTime < 0.28) return

@@ -3,18 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Ballborn: a side-view action roguelite where the ball is the build." />
     <title>Ballborn</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Ccircle cx=%278%27 cy=%278%27 r=%277%27 fill=%27%23ff5a1f%27/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;520;640;760&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
   </head>
   <body>
     <div id="app">
-      <canvas id="view" aria-hidden="true"></canvas>
+      <canvas id="view" aria-label="Game view" role="img"></canvas>
       <div id="hud" hidden>
         <header class="hud-top">
           <div class="meter integrity">
-            <div class="meter-label"><span>Integrity</span><span id="hp-num"></span></div>
+            <div class="meter-label"><span>Integrity <b id="hp-warn" class="warn-tag"></b></span><span id="hp-num"></span></div>
             <div class="track"><div id="hp-bar"></div></div>
           </div>
           <div class="objective">
@@ -22,30 +24,32 @@
             <div id="room-obj"></div>
           </div>
           <div class="resources">
-            <span id="cinders"></span>
-            <span id="embers"></span>
+            <span id="cinders" class="cur cinder"></span>
+            <span id="embers" class="cur ember"></span>
           </div>
         </header>
         <div id="prompt" class="prompt" hidden></div>
         <footer class="hud-bottom">
-          <div id="slots" class="slots"></div>
-          <div class="ability-readout">
-            <div id="ability-name">Ability</div>
-            <div class="track slim"><div id="ability-bar"></div></div>
-            <div id="energy-num"></div>
+          <div id="ability-readout" class="ability-readout">
+            <div class="ability-head"><span id="ability-name">Ability</span><b id="ability-state"></b></div>
+            <div class="track slim cooldown"><div id="ability-bar"></div></div>
+            <div class="track slim energy"><div id="energy-bar"></div></div>
+            <div id="energy-num" class="small"></div>
           </div>
           <div class="readouts">
-            <div id="speed-read"></div>
-            <div id="combo-read"></div>
-            <div id="instability-read"></div>
+            <span id="speed-read"></span>
+            <span id="combo-read"></span>
+            <span id="instability-read"></span>
           </div>
+          <div class="build-chip"><span id="archetype"></span> <span class="small muted">Tab: build sheet</span></div>
         </footer>
         <aside id="sheet" class="sheet" hidden></aside>
       </div>
-      <div id="screen"></div>
-      <div id="toasts" aria-live="polite"></div>
+      <main id="screen"></main>
+      <div id="toasts" aria-live="polite" aria-atomic="false"></div>
       <div id="live" class="sr-only" aria-live="polite"></div>
     </div>
+    <noscript>Ballborn needs JavaScript to run.</noscript>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

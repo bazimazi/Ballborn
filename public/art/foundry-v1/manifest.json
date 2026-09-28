@@ -1,0 +1,261 @@
+{
+  "collection": "Ballborn / Foundry v1",
+  "created": "2026-09-28",
+  "baseUrl": "/art/foundry-v1/",
+  "palette": {
+    "charcoal": "#14110f",
+    "iron": "#302820",
+    "steel": "#e4d8c8",
+    "amber": "#ffb15a",
+    "molten": "#ff5a1f",
+    "rubber": "#3ecf8e",
+    "arc": "#7cbcff"
+  },
+  "icons": [
+    {
+      "id": "core-balanced",
+      "path": "icons/core-balanced.svg",
+      "format": "svg",
+      "viewBox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "background": "transparent",
+      "origin": "Original code-authored vector artwork",
+      "recommendedSize": [
+        24,
+        96
+      ]
+    },
+    {
+      "id": "core-heavy",
+      "path": "icons/core-heavy.svg",
+      "format": "svg",
+      "viewBox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "background": "transparent",
+      "origin": "Original code-authored vector artwork",
+      "recommendedSize": [
+        24,
+        96
+      ]
+    },
+    {
+      "id": "core-light",
+      "path": "icons/core-light.svg",
+      "format": "svg",
+      "viewBox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "background": "transparent",
+      "origin": "Original code-authored vector artwork",
+      "recommendedSize": [
+        24,
+        96
+      ]
+    },
+    {
+      "id": "currency-cinders",
+      "path": "icons/currency-cinders.svg",
+      "format": "svg",
+      "viewBox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "background": "transparent",
+      "origin": "Original code-authored vector artwork",
+      "recommendedSize": [
+        24,
+        96
+      ]
+    },
+    {
+      "id": "currency-embers",
+      "path": "icons/currency-embers.svg",
+      "format": "svg",
+      "viewBox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "background": "transparent",
+      "origin": "Original code-authored vector artwork",
+      "recommendedSize": [
+        24,
+        96
+      ]
+    },
+    {
+      "id": "currency-scrap",
+      "path": "icons/currency-scrap.svg",
+      "format": "svg",
+      "viewBox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "background": "transparent",
+      "origin": "Original code-authored vector artwork",
+      "recommendedSize": [
+        24,
+        96
+      ]
+    },
+    {
+      "id": "slot-ability",
+      "path": "icons/slot-ability.svg",
+      "format": "svg",
+      "viewBox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "background": "transparent",
+      "origin": "Original code-authored vector artwork",
+      "recommendedSize": [
+        24,
+        96
+      ]
+    },
+    {
+      "id": "slot-core",
+      "path": "icons/slot-core.svg",
+      "format": "svg",
+      "viewBox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "background": "transparent",
+      "origin": "Original code-authored vector artwork",
+      "recommendedSize": [
+        24,
+        96
+      ]
+    },
+    {
+      "id": "slot-impact",
+      "path": "icons/slot-impact.svg",
+      "format": "svg",
+      "viewBox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "background": "transparent",
+      "origin": "Original code-authored vector artwork",
+      "recommendedSize": [
+        24,
+        96
+      ]
+    },
+    {
+      "id": "slot-momentum",
+      "path": "icons/slot-momentum.svg",
+      "format": "svg",
+      "viewBox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "background": "transparent",
+      "origin": "Original code-authored vector artwork",
+      "recommendedSize": [
+        24,
+        96
+      ]
+    },
+    {
+      "id": "slot-passive",
+      "path": "icons/slot-passive.svg",
+      "format": "svg",
+      "viewBox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "background": "transparent",
+      "origin": "Original code-authored vector artwork",
+      "recommendedSize": [
+        24,
+        96
+      ]
+    },
+    {
+      "id": "slot-shell",
+      "path": "icons/slot-shell.svg",
+      "format": "svg",
+      "viewBox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "background": "transparent",
+      "origin": "Original code-authored vector artwork",
+      "recommendedSize": [
+        24,
+        96
+      ]
+    }
+  ],
+  "images": [
+    {
+      "id": "title-foundry",
+      "path": "images/title-foundry.png",
+      "format": "png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1831496,
+      "origin": "OpenAI built-in image generation",
+      "role": "Title/menu key art",
+      "composition": "Dark left region for text, ball at right",
+      "background": "opaque",
+      "tileable": false
+    },
+    {
+      "id": "foundry-depths",
+      "path": "images/foundry-depths.png",
+      "format": "png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1527889,
+      "origin": "OpenAI built-in image generation",
+      "role": "Distant room background plate",
+      "composition": "Low-contrast scenery; not collision geometry",
+      "background": "opaque",
+      "tileable": false
+    },
+    {
+      "id": "iron-colossus",
+      "path": "images/iron-colossus.png",
+      "format": "png",
+      "width": 1254,
+      "height": 1254,
+      "bytes": 2652210,
+      "origin": "OpenAI built-in image generation",
+      "role": "Codex or boss introduction portrait",
+      "composition": "Furnace construct and three prominent golden rivets; not a gameplay sprite",
+      "background": "opaque",
+      "tileable": false
+    }
+  ]
+}

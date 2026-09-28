@@ -70,7 +70,7 @@ export type HookEvent =
   | 'onAbility'
 
 export type StatusId = 'burn' | 'shock' | 'slow'
-export type KillKind = 'burn' | 'explode' | 'impact' | 'any'
+export type KillKind = 'burn' | 'explode' | 'impact' | 'hazard' | 'any'
 export type Scale = 'flat' | 'impact' | 'massSpeed' | 'dealt'
 export type Material = 'metal' | 'rubber' | 'glass' | 'fire' | 'electric' | 'heavy'
 export type ProjectileStyle = 'normal' | 'reflect-fast' | 'attract'
@@ -86,7 +86,7 @@ export interface Modifier {
 
 export type Action =
   | { type: 'damage'; amount: number; scale: Scale; counter?: string; counterMul?: number; tags?: Tag[]; pierce?: boolean }
-  | { type: 'area'; amount: number; scale: Scale; radius: number; tags?: Tag[]; pierce?: boolean }
+  | { type: 'area'; amount: number; scale: Scale; radius: number; tags?: Tag[]; pierce?: boolean; status?: { status: StatusId; duration: number; magnitude: number } }
   | { type: 'status'; status: StatusId; duration: number; magnitude: number }
   | { type: 'knockback'; force: number }
   | { type: 'heal'; amount: number; scale: 'flat' | 'dealt' }
@@ -205,6 +205,8 @@ export interface EnemyDef {
   shield?: boolean
   shieldBreak?: number
   shot?: { period: number; speed: number; damage: number; color: string }
+  /** Ranged walkers back away when the ball is closer than this. */
+  keepAway?: number
   pull?: number
   split?: { id: string; count: number }
   explode?: { radius: number; damage: number }
@@ -376,4 +378,74 @@ export interface CompiledBuild {
   strengths: string[]
   archetype: string
   impactTags: Tag[]
+}
+
+/** Everything that can reduce the player's integrity. Rules per source live in data/damage.ts. */
+export type DamageSource =
+  | 'contact'
+  | 'recoil'
+  | 'projectile'
+  | 'explosion'
+  | 'lava'
+  | 'spikes'
+  | 'crusher'
+  | 'geyser'
+  | 'boss'
+  | 'pit'
+
+export interface DamageRule {
+  label: string
+  /** Armor (damageReduction) applies. */
+  mitigated: boolean
+  /** A dash's phase frames ignore it. */
+  phaseable: boolean
+  /** Respects and starts the post-hit invulnerability window. */
+  lock: boolean
+  /** Damage over time: applied per tick, never blocked by the hit window. */
+  dot: boolean
+  /** Ends the run regardless of integrity (the lab catches it instead). */
+  instant: boolean
+}
+
+/** How a hit on a construct or the boss was delivered. */
+export type HitSource = 'collision' | 'ability' | 'effect' | 'reflect' | 'status' | 'hazard'
+
+export interface HitInfo {
+  source: HitSource
+  ability?: AbilityKind
+  effectId?: string
+  kind?: KillKind
+  pierce?: boolean
+}
+
+export interface HitRecord {
+  target: 'enemy' | 'boss' | 'rivet'
+  source: HitSource
+  ability?: AbilityKind
+  effectId?: string
+  tags: Tag[]
+  /** Integrity actually removed. */
+  effective: number
+  /** Damage beyond what the target had left. */
+  overkill: number
+  lethal: boolean
+}
+
+export interface HeatDef {
+  id: number
+  name: string
+  detail: string
+  /** Cumulative changes, shown verbatim when this heat is selected. */
+  effects: string[]
+  enemyHp: number
+  enemyDamage: number
+  attackRate: number
+  eliteHp: number
+  roomRecovery: number
+  geysers: boolean
+  shopPrice: number
+  gravity: number
+  bossHp: number
+  bossTempo: number
+  healDrops: number
 }

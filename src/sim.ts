@@ -2,18 +2,25 @@ import { TUNE } from './tune'
 import { ballRadius, collisionDamage, hopVelocity, horizontalAccel, resolveCircleAabb, verticalAccel, type Body } from './physics'
 import { triggerEffects, type EffectApi, type FxEnemy } from './effects'
 import { ENEMY_MAP } from './data/enemies'
-import type { EnemyDef, KillKind, RoomTemplate, Tag } from './types'
+import { DAMAGE_RULES } from './data/damage'
+import { heatOf } from './data/meta'
+import type {
+  AbilityKind, DamageSource, EnemyDef, HazardDef, HeatDef, HitInfo, HitRecord, HitSource, HookEvent, KillKind, RoomTemplate, Tag,
+} from './types'
 import type { CompiledBuild } from './types'
 import type { FrameInput } from './input'
-import { clamp, hypot } from './util'
+import { clamp, cosmeticRng, hypot, mulberry32, type Rng } from './util'
 
 export interface LiveEnemy extends FxEnemy {
+  kind: 'enemy'
   defId: string
   name: string
   facing: number
   stun: number
   hitCd: number
   attackCd: number
+  /** Seconds of visible wind-up before a ranged construct fires. */
+  windup: number
   elite: boolean
   flying: boolean
   shield: boolean
@@ -30,12 +37,15 @@ export interface LiveEnemy extends FxEnemy {
   split?: { id: string; count: number }
   explodeOnDeath?: { radius: number; damage: number }
   shot?: EnemyDef['shot']
+  keepAway?: number
   pull?: number
   maxHp: number
   hitFlash: number
   blinkCd: number
   killedBy?: KillKind
   pinned: boolean
+  /** Placed by the room (not split off or summoned). Only these respawn in the lab. */
+  origin: boolean
 }
 
 export interface Solid {
@@ -52,6 +62,8 @@ export interface Solid {
   frameY: number
   breakable: boolean
   alive: boolean
+  /** Boundary walls and ceiling: not drawn, not a landing surface for loot rules. */
+  bounds?: boolean
 }
 
 export interface Bullet {
@@ -72,9 +84,12 @@ export interface Pickup {
   y: number
   vx: number
   vy: number
+  r: number
   kind: 'cinder' | 'heal'
   value: number
+  /** Seconds left. Cinders never expire; healing does. */
   life: number
+  homing: boolean
 }
 
 export interface Particle {
@@ -99,19 +114,15 @@ export interface Floater {
   color: string
 }
 
-export interface Rivet {
+export interface Rivet extends FxEnemy {
+  kind: 'rivet'
   ox: number
   oy: number
-  hp: number
   max: number
-  alive: boolean
 }
 
-export interface BossState {
-  x: number
-  y: number
-  r: number
-  hp: number
+export interface BossState extends FxEnemy {
+  kind: 'boss'
   maxHp: number
   phase: 1 | 2 | 3
   rivets: Rivet[]
@@ -120,25 +131,65 @@ export interface BossState {
   telegraph: number
   slamX: number
   slamLive: number
+  /** After a slam the Colossus is stuck in the floor: body hits land harder. */
+  recover: number
   hitFlash: number
   added: boolean
+  /** Countdown before the phase-three floor collapse. Visible warning while > 0. */
+  collapse: number
 }
 
+/**
+ * Explicit rules for how build mechanics meet the Colossus. Everything that
+ * works on constructs works here, scaled by these numbers.
+ */
+export const BOSS_RULES = {
+  /** Phase one plate: share of body damage that gets through (all sources). */
+  plate: 0.38,
+  /** Body damage multiplier while it recovers from a slam. */
+  recovering: 1.3,
+  burn: 0.6,
+  effect: 0.8,
+  explosion: 0.65,
+  reflectBonus: 6,
+  rivetHp: 70,
+  /** Integrity the Colossus loses when a rivet breaks. */
+  rivetBreak: 40,
+  collapseWarning: 1.8,
+} as const
+
 export interface SimListeners {
-  onDeath?: (cause: string) => void
-  onClear?: () => void
   onDiscovery?: (id: string) => void
   onToast?: (text: string) => void
   onShake?: (mag: number) => void
+  onFlash?: (strength: number) => void
   onHitstop?: (time: number) => void
-  onImpactSfx?: (speed: number) => void
+  onImpactSfx?: (speed: number, kind: 'clean' | 'glance' | 'block') => void
   onBounceSfx?: (speed: number) => void
-  onHurt?: () => void
+  onReflectSfx?: () => void
+  onHurt?: (source: DamageSource, amount: number) => void
   onAbility?: (kind: string) => void
   onCombo?: (n: number) => void
-  onKill?: (info: { reflected: boolean; slam: boolean }) => void
-  onSpeed?: (speed: number) => void
-  onHit?: (damage: number) => void
+  onKill?: (record: HitRecord, enemy: { defId: string; elite: boolean }) => void
+  onBossPhase?: (phase: number) => void
+  onHit?: (record: HitRecord) => void
+}
+
+export interface SimOptions {
+  hp: number
+  energy: number
+  heat: number
+  depth: number
+  curse: boolean
+  gentle: boolean
+  god: boolean
+  lab: boolean
+  /** Seed for this room's combat stream. The same seed and inputs replay the same room. */
+  seed: number
+  /** Cosmetic stream. Never read by gameplay. */
+  fx?: Rng
+  /** Damage-taken assist multiplier (1 = off). */
+  assist?: number
 }
 
 export function crusherPose(h: { y: number; drop?: number; period?: number; phase?: number }, time: number): { y: number; smashing: boolean; warn: boolean; cycle: number } {
@@ -169,8 +220,27 @@ export function crusherPose(h: { y: number; drop?: number; period?: number; phas
   return { y, smashing, warn, cycle: Math.floor(local / period) }
 }
 
+export function geyserPhase(h: { period?: number; phase?: number }, time: number): { warn: boolean; erupt: boolean } {
+  const period = h.period ?? 2.4
+  const t = ((time + (h.phase ?? 0)) % period + period) % period
+  return { warn: t > period - 0.7, erupt: t > period - 0.28 }
+}
+
+const HIT_SOURCES: HitSource[] = ['collision', 'ability', 'effect', 'reflect', 'status', 'hazard']
+
+function zeroBy<K extends string>(keys: readonly K[]): Record<K, number> {
+  const out = {} as Record<K, number>
+  for (const k of keys) out[k] = 0
+  return out
+}
+
 export class Simulation implements EffectApi {
+  readonly dt = TUNE.fixedDt
+  room: RoomTemplate
   ball: Body
+  /** Ball position at the start of the latest tick, for render interpolation. */
+  prevX: number
+  prevY: number
   enemies: LiveEnemy[] = []
   bullets: Bullet[] = []
   pickups: Pickup[] = []
@@ -187,20 +257,26 @@ export class Simulation implements EffectApi {
   magnetTimer = 0
   taxLeft = 0
   controlMul = 1
+  /** Seconds during which overspeed from an ability or impulse bleeds slowly. */
+  boost = 0
   instability = 0
   combo = 0
   comboTimer = 0
   bestCombo = 0
   grounded = false
+  groundKind: Solid['kind'] | null = null
+  /** Speed of the surface under the ball (conveyor belts). */
+  groundVx = 0
   groundTime = 0
   coyote = 0
   jumpBuffer = 0
   facing = 1
   hurtLock = 0
+  tick = 0
   time = 0
   exitOpen = false
   ended: 'play' | 'dead' | 'clear' = 'play'
-  cause = ''
+  cause: DamageSource | '' = ''
   abilityCd = 0
   trail: { x: number; y: number }[] = []
   survivalLeft = 0
@@ -211,54 +287,59 @@ export class Simulation implements EffectApi {
   fxDepth = 0
   discovered = new Set<string>()
   squash = 0
-  abilityDamage = 0
+  /** Share of cosmetic particles to spawn. Changing it never changes gameplay. */
+  fxLevel = 1
   roomDamage = 0
-  reflectedKill = false
-  slamKill = false
+  /** Integrity lost this room, per source. */
+  taken: Record<DamageSource, number>
+  /** Damage dealt this room, per source (effective, not overkill). */
+  dealt: Record<HitSource, number> = zeroBy(HIT_SOURCES)
+  /** Damage the Colossus and its rivets took, per source. */
+  bossDealt: Record<HitSource, number> = zeroBy(HIT_SOURCES)
+  kills = 0
+  /** Cinders collected this room, drained by the game when the room ends. */
+  cinderPocket = 0
+  readonly heat: HeatDef
+  readonly rng: Rng
+  readonly fx: Rng
   private uid = 1
   private crusherHits = new Map<number, number>()
   private stormCd = 0.4
+  private slagCd = 0
   private riding: Solid | null = null
-  private pendingReflected = false
   private labRespawns: { id: string; x: number; y: number; elite: boolean; t: number }[] = []
-  readonly rng: () => number
 
   constructor(
-    public room: RoomTemplate,
+    template: RoomTemplate,
     public build: CompiledBuild,
-    public opts: {
-      hp: number
-      energy: number
-      heat: number
-      depth: number
-      curse: boolean
-      gentle: boolean
-      god: boolean
-      lab: boolean
-      rng: () => number
-    },
+    public opts: SimOptions,
     public listeners: SimListeners = {},
   ) {
-    this.rng = opts.rng
+    // Content definitions are frozen. The simulation owns a private copy, so
+    // collapsing floors and added hazards never leak into the next room.
+    const room = structuredClone(template) as RoomTemplate
+    this.room = room
+    this.rng = mulberry32(opts.seed)
+    this.fx = opts.fx ?? cosmeticRng()
+    this.heat = heatOf(opts.heat)
+    this.taken = zeroBy(Object.keys(DAMAGE_RULES) as DamageSource[])
     this.maxHp = build.stats.maxHp
     this.hp = clamp(opts.hp, 1, this.maxHp)
     this.energy = clamp(opts.energy, 0, build.stats.energyMax)
-    this.ball = {
-      x: room.player.x,
-      y: room.player.y,
-      vx: 0,
-      vy: 0,
-      r: ballRadius(build.stats.mass),
-      spin: 0,
-    }
+    this.ball = { x: room.player.x, y: room.player.y, vx: 0, vy: 0, r: ballRadius(build.stats.mass), spin: 0 }
+    this.prevX = this.ball.x
+    this.prevY = this.ball.y
     this.survivalLeft = room.survival ?? 0
+    const wall = (x: number, y: number, w: number, h: number): Solid => ({
+      x, y, w, h, kind: 'metal', conveyor: 0, baseX: x, baseY: y, frameX: x, frameY: y, breakable: false, alive: true, bounds: true,
+    })
     this.solids.push(
-      { x: -50, y: -600, w: 50, h: room.height + 1200, kind: 'metal', conveyor: 0, baseX: -50, baseY: -600, frameX: -50, frameY: -600, breakable: false, alive: true },
-      { x: room.width, y: -600, w: 50, h: room.height + 1200, kind: 'metal', conveyor: 0, baseX: room.width, baseY: -600, frameX: room.width, frameY: -600, breakable: false, alive: true },
-      { x: -50, y: -48, w: room.width + 100, h: 48, kind: 'metal', conveyor: 0, baseX: -50, baseY: -48, frameX: -50, frameY: -48, breakable: false, alive: true },
+      wall(-50, -600, 50, room.height + 1200),
+      wall(room.width, -600, 50, room.height + 1200),
+      wall(-50, -48, room.width + 100, 48),
     )
     for (const p of room.platforms) {
-      const s: Solid = {
+      this.solids.push({
         x: p.x, y: p.y, w: p.w, h: p.h ?? 22,
         kind: p.kind ?? 'metal',
         conveyor: p.conveyor ?? 0,
@@ -266,20 +347,15 @@ export class Simulation implements EffectApi {
         baseX: p.x, baseY: p.y, frameX: p.x, frameY: p.y,
         breakable: !!p.breakable,
         alive: true,
-      }
-      this.solids.push(s)
+      })
     }
-    if ((opts.curse || (opts.heat >= 2 && (room.type === 'combat' || room.type === 'elite'))) && room.type !== 'boss') {
-      this.room = {
-        ...room,
-        hazards: [
-          ...room.hazards,
-          { type: 'geyser', x: room.width * 0.38, y: 590, w: 54, h: 20, period: 2.5, phase: 0.2 },
-          { type: 'geyser', x: room.width * 0.68, y: 590, w: 54, h: 20, period: 2.8, phase: 1.1 },
-        ],
-      }
+    if ((opts.curse || (this.heat.geysers && (room.type === 'combat' || room.type === 'elite'))) && room.type !== 'boss') {
+      room.hazards.push(
+        { type: 'geyser', x: room.width * 0.38, y: 590, w: 54, h: 20, period: 2.5, phase: 0.2 },
+        { type: 'geyser', x: room.width * 0.68, y: 590, w: 54, h: 20, period: 2.8, phase: 1.1 },
+      )
     }
-    const scale = (1 + opts.depth * 0.08) * (1 + opts.heat * 0.1) * (opts.gentle ? 0.75 : 1)
+    const scale = (1 + opts.depth * 0.08) * this.heat.enemyHp * (opts.gentle ? 0.75 : 1)
     const spawns = opts.lab
       ? [
           { id: 'grunt', x: 640, y: 500, elite: false },
@@ -288,7 +364,7 @@ export class Simulation implements EffectApi {
           { id: 'spark', x: 800, y: 320, elite: false },
         ]
       : room.spawns
-    for (const s of spawns) this.enemies.push(this.makeEnemy(s.id, s.x, s.y, !!s.elite, scale))
+    for (const s of spawns) this.enemies.push({ ...this.makeEnemy(s.id, s.x, s.y, !!s.elite, scale), origin: true })
     if (room.type === 'boss') this.makeBoss()
     if (!this.enemies.some((e) => e.alive) && room.type === 'traversal' && !room.rules?.includes('survival')) this.exitOpen = true
     this.fireEvent('onRoomStart', this.ball.x, this.ball.y, 0, 0, 0)
@@ -298,15 +374,21 @@ export class Simulation implements EffectApi {
     return this.effectiveStats()
   }
 
+  get hazards(): HazardDef[] {
+    return this.room.hazards
+  }
+
   private effectiveStats() {
     const s = { ...this.build.stats }
     if (this.taxLeft > 0) s.airControl *= this.controlMul
     if (this.room.rules?.includes('low-friction')) s.friction *= 0.28
+    if (this.grounded && this.groundKind === 'ice') s.friction *= 0.3
     if (this.room.rules?.includes('high-gravity')) s.gravity *= 1.48
-    if (this.opts.heat >= 3) s.gravity *= 1.08
+    s.gravity *= this.heat.gravity
     return s
   }
 
+  /** Lab swaps. Same policy as every other equip path: keep the integrity ratio. */
   syncBuild(build: CompiledBuild): void {
     const ratio = this.maxHp > 0 ? this.hp / this.maxHp : 1
     this.build = build
@@ -316,9 +398,30 @@ export class Simulation implements EffectApi {
     this.energy = Math.min(this.energy, build.stats.energyMax)
   }
 
-  update(dt: number, input: FrameInput, mouse: { x: number; y: number } | null): void {
-    if (this.ended !== 'play') return
+  targets(): FxEnemy[] {
+    const list: FxEnemy[] = this.enemies.filter((e) => e.alive)
+    if (this.boss && this.boss.alive) {
+      list.push(this.boss)
+      for (const r of this.boss.rivets) if (r.alive) list.push(r)
+    }
+    return list
+  }
+
+  get done(): boolean {
+    return this.ended !== 'play'
+  }
+
+  /**
+   * Advance exactly one fixed tick. Pressed edges in `input` are acted on
+   * once; the caller must not repeat them on the following tick.
+   */
+  step(input: FrameInput, mouse: { x: number; y: number } | null = null): void {
+    if (this.done) return
+    const dt = this.dt
+    this.tick++
     this.time += dt
+    this.prevX = this.ball.x
+    this.prevY = this.ball.y
     this.gateWarn = Math.max(0, this.gateWarn - dt)
     const stats = this.effectiveStats()
     this.energy = Math.min(stats.energyMax, this.energy + stats.energyRegen * dt)
@@ -327,6 +430,8 @@ export class Simulation implements EffectApi {
     this.phase = Math.max(0, this.phase - dt)
     this.magnetTimer = Math.max(0, this.magnetTimer - dt)
     this.taxLeft = Math.max(0, this.taxLeft - dt)
+    this.boost = Math.max(0, this.boost - dt)
+    this.slagCd = Math.max(0, this.slagCd - dt)
     this.squash = Math.max(0, this.squash - dt)
     if (this.comboTimer > 0) {
       this.comboTimer -= dt
@@ -353,8 +458,10 @@ export class Simulation implements EffectApi {
       }
     }
 
-    const speedNow = hypot(this.ball.vx, this.ball.vy)
-    const steps = clamp(Math.ceil(speedNow / 420), 1, 5)
+    // Substeps are derived from displacement relative to the ball's size, so
+    // even an ability-boosted ball moves under half a radius per substep.
+    const travel = hypot(this.ball.vx, this.ball.vy) * dt
+    const steps = clamp(Math.ceil(travel / (this.ball.r * 0.45)), 1, 8)
     const sub = dt / steps
     for (let i = 0; i < steps; i++) this.substep(sub, ix, input.y, input.hopHeld)
 
@@ -364,48 +471,69 @@ export class Simulation implements EffectApi {
     }
 
     this.updateEnemies(dt)
+    if (this.done) return
     this.collideEnemies()
+    if (this.done) return
     this.updateBoss(dt)
+    if (this.done) return
     this.updateBullets(dt)
+    if (this.done) return
     this.updatePickups(dt)
     this.updateHazards(dt)
+    if (this.done) return
     this.tickStatus(dt)
-    this.fireEvent('onTick', this.ball.x, this.ball.y, 0, -1, hypot(this.ball.vx, this.ball.vy), undefined, dt)
+    if (this.done) return
+    this.fireEvent('onTick', this.ball.x, this.ball.y, 0, -1, hypot(this.ball.vx, this.ball.vy), undefined, 0, undefined, dt)
+    if (this.done) return
     this.updateRespawns(dt)
     this.checkObjective(dt)
     this.tryExit()
-    if (this.ball.y > this.room.height + 150) this.hurt(999, 'pit')
+    if (this.done) return
+    if (this.ball.y > this.room.height + 150) this.hurt(1, 'pit')
+    if (this.done) return
+    this.enemies = this.enemies.filter((e) => e.alive)
+    this.updateCosmetics(dt)
+  }
+
+  private updateCosmetics(dt: number): void {
     const sp = hypot(this.ball.vx, this.ball.vy)
-    if (sp > 40) this.listeners.onSpeed?.(sp)
     this.trail.push({ x: this.ball.x, y: this.ball.y })
     if (this.trail.length > 16) this.trail.shift()
-    this.particles = this.particles.filter((p) => {
+    for (const p of this.particles) {
       p.life -= dt
       p.x += p.vx * dt
       p.y += p.vy * dt
       p.vy += 500 * dt
-      return p.life > 0
-    })
+    }
+    if (this.tick % 4 === 0) this.particles = this.particles.filter((p) => p.life > 0)
     if (this.particles.length > 420) this.particles.splice(0, this.particles.length - 420)
     for (const f of this.floaters) {
       f.life -= dt
       f.y -= 28 * dt
     }
-    this.floaters = this.floaters.filter((f) => f.life > 0)
-    if (this.grounded && sp > 80) {
-      if (this.rng() < dt * 10) this.burst(this.ball.x, this.ball.y + this.ball.r * 0.6, 1, '#c7b8a4', 40)
-    }
+    if (this.tick % 4 === 0) this.floaters = this.floaters.filter((f) => f.life > 0)
+    if (this.grounded && sp > 80 && this.fx() < dt * 10) this.burst(this.ball.x, this.ball.y + this.ball.r * 0.6, 1, '#c7b8a4', 40)
   }
 
   private substep(dt: number, ix: number, iy: number, hopHeld: boolean): void {
     const stats = this.effectiveStats()
-    const ax = horizontalAccel(stats, ix, this.ball.vx, this.grounded)
+    // Friction acts relative to the surface, so a belt carries a resting ball at its own speed.
+    const beltVx = this.grounded ? this.groundVx : 0
+    let ax = horizontalAccel(stats, ix, this.ball.vx - beltVx, this.grounded)
     const ay = verticalAccel(stats, hopHeld && iy < 0, iy > 0, this.grounded)
+    // Input never pushes past the cap; overspeed from impulses bleeds away
+    // instead of being cut, so abilities keep their momentum briefly.
+    const cap = stats.maxSpeed
+    if (Math.abs(this.ball.vx) >= cap && Math.sign(ax) === Math.sign(this.ball.vx)) ax = 0
     this.ball.vx += ax * dt
     this.ball.vy += ay * dt
-    if (Math.abs(this.ball.vx) > stats.maxSpeed) this.ball.vx = Math.sign(this.ball.vx) * stats.maxSpeed
-    const vCap = stats.maxSpeed * 1.5
-    if (Math.abs(this.ball.vy) > vCap) this.ball.vy = Math.sign(this.ball.vy) * vCap
+    const over = Math.abs(this.ball.vx) - cap
+    if (over > 0) {
+      const k = this.boost > 0 ? TUNE.overspeedDecayBoosted : TUNE.overspeedDecay
+      this.ball.vx = Math.sign(this.ball.vx) * (cap + over * Math.exp(-k * dt))
+    }
+    const vCap = cap * 1.5
+    if (Math.abs(this.ball.vy) > vCap && this.boost <= 0) this.ball.vy = Math.sign(this.ball.vy) * vCap
     if (this.jumpBuffer > 0 && (this.grounded || this.coyote > 0)) {
       this.ball.vy = hopVelocity(stats)
       this.jumpBuffer = 0
@@ -418,14 +546,14 @@ export class Simulation implements EffectApi {
     const wasGround = this.grounded
     this.grounded = false
     this.riding = null
-    // Floor contact happens every frame. A per-frame tangent multiplier caps
-    // roll speed far below maxSpeed. Ground drag is the friction force.
     for (const s of this.solids) {
       if (!s.alive) continue
       const c = resolveCircleAabb(this.ball, s, stats.restitution, 1, 0, 0)
       if (!c.hit) continue
       if (c.ny < -0.55) {
         this.grounded = true
+        this.groundKind = s.kind
+        this.groundVx = s.kind === 'conveyor' ? s.conveyor : 0
         this.riding = s
         if (Math.abs(this.ball.vy) < 48) this.ball.vy = 0
         if (s.kind === 'spring' && (c.impactSpeed > 60 || hopHeld)) {
@@ -434,7 +562,6 @@ export class Simulation implements EffectApi {
           this.burst(this.ball.x, s.y, 6, '#ffb15a', 160)
           this.listeners.onBounceSfx?.(500)
         }
-        if (s.kind === 'conveyor') this.ball.vx += s.conveyor * dt * 4
         if (this.slamArmed && c.impactSpeed > 220) {
           this.slamArmed = false
           this.slamShock(c.impactSpeed)
@@ -446,6 +573,10 @@ export class Simulation implements EffectApi {
         this.fireEvent('onBounce', this.ball.x, this.ball.y, c.nx, c.ny, c.impactSpeed)
         if (c.ny < -0.55) this.fireEvent('onLand', this.ball.x, this.ball.y, c.nx, c.ny, c.impactSpeed)
       }
+    }
+    if (!this.grounded) {
+      this.groundKind = null
+      this.groundVx = 0
     }
     if (wasGround && !this.grounded) this.coyote = TUNE.coyote
     if (this.grounded) {
@@ -459,12 +590,21 @@ export class Simulation implements EffectApi {
     }
   }
 
+  /** Why the ability cannot fire right now, or null when it is ready. */
+  abilityBlock(): 'none' | 'cooldown' | 'energy' | null {
+    const ability = this.build.ability
+    if (!ability) return 'none'
+    if (this.abilityCd > 0) return 'cooldown'
+    if (this.energy < ability.energy) return 'energy'
+    return null
+  }
+
   private useAbility(input: FrameInput): void {
     const ability = this.build.ability
-    if (!ability || this.abilityCd > 0 || this.energy < ability.energy) return
+    if (!ability || this.abilityBlock() !== null) return
     this.energy -= ability.energy
     this.abilityCd = ability.cooldown
-    this.opts && (this.listeners.onAbility?.(ability.kind))
+    this.listeners.onAbility?.(ability.kind)
     const stats = this.effectiveStats()
     if (ability.kind === 'dash') {
       let dx = input.x
@@ -475,15 +615,18 @@ export class Simulation implements EffectApi {
       this.ball.vx += (dx / len) * impulse
       this.ball.vy += (dy / len) * impulse * 0.82
       this.phase = 0.14
+      this.boost = 0.3
       this.burst(this.ball.x, this.ball.y, 8, this.build.visual.trail, 220)
     } else if (ability.kind === 'slam') {
       this.ball.vy = Math.max(this.ball.vy, 980 / Math.pow(stats.mass, 0.2))
       this.slamArmed = true
+      this.boost = 0.4
     } else if (ability.kind === 'burst') {
       this.ball.vy = Math.min(this.ball.vy, -640 / Math.pow(stats.mass, 0.35))
       this.ball.vx += input.x * 220
       this.phase = 0.08
-      this.blastArea(this.ball.x, this.ball.y, 96, 16, true)
+      this.boost = 0.25
+      this.blastArea(this.ball.x, this.ball.y, 96, 16, 'burst')
       this.burst(this.ball.x, this.ball.y, 10, '#ffe7c2', 200)
     } else if (ability.kind === 'magnet') {
       this.magnetTimer = 0.55
@@ -495,28 +638,24 @@ export class Simulation implements EffectApi {
   private slamShock(impactSpeed: number): void {
     const stats = this.effectiveStats()
     const dmg = collisionDamage(stats, impactSpeed, this.comboMul(), false) * 0.85
-    this.blastArea(this.ball.x, this.ball.y, 120 + impactSpeed * 0.05, dmg, true)
+    this.blastArea(this.ball.x, this.ball.y, 120 + impactSpeed * 0.05, dmg, 'slam')
     this.listeners.onShake?.(Math.min(14, impactSpeed / 80))
     this.listeners.onHitstop?.(0.045)
     this.ring(this.ball.x, this.ball.y, 18)
     this.listeners.onAbility?.('slam-land')
   }
 
-  private blastArea(x: number, y: number, radius: number, dmg: number, fromAbility: boolean): void {
-    for (const e of this.enemies) {
-      if (!e.alive) continue
+  private blastArea(x: number, y: number, radius: number, dmg: number, ability: AbilityKind): void {
+    for (const e of this.targets()) {
       if (hypot(e.x - x, e.y - y) <= radius + e.r) {
-        if (fromAbility) this.slamKill = true
-        this.damageEnemy(e, dmg, ['area', 'impact'], { source: fromAbility ? 'ability' : 'effect', kind: 'impact' })
+        this.damageEnemy(e, dmg, ['area', 'impact'], { source: 'ability', ability, kind: 'impact' })
         this.knockback(e, (e.x - x) || 1, (e.y - y) || -0.2, 380)
       }
-    }
-    if (this.boss && this.boss.hp > 0 && hypot(this.boss.x - x, this.boss.y - y) < radius + this.boss.r) {
-      this.hurtBoss(dmg, fromAbility)
     }
   }
 
   private updateEnemies(dt: number): void {
+    const ballMass = this.effectiveStats().mass
     for (const e of this.enemies) {
       if (!e.alive) continue
       e.hitFlash = Math.max(0, e.hitFlash - dt)
@@ -540,31 +679,37 @@ export class Simulation implements EffectApi {
       } else if (e.behavior === 'turret') {
         e.vx = 0
         e.vy = 0
+        e.facing = Math.sign(this.ball.x - e.x) || e.facing
       } else if (e.behavior === 'blink') {
         const d = hypot(this.ball.x - e.x, this.ball.y - e.y)
         if (d < 150 && e.blinkCd <= 0) {
+          this.burst(e.x, e.y, 6, e.accent, 80)
           const ang = this.rng() * Math.PI * 2
           e.x = clamp(this.ball.x + Math.cos(ang) * 220, 40, this.room.width - 40)
           e.y = clamp(this.ball.y - 80 + Math.sin(ang) * 40, 80, 560)
           e.blinkCd = 1.4
+          // A blink always gives the player a beat before the next shot.
+          e.attackCd = Math.max(e.attackCd, 0.6)
           this.burst(e.x, e.y, 6, e.accent, 80)
         }
         e.vx *= Math.exp(-2 * dt)
         e.vy *= Math.exp(-2 * dt)
       } else {
-        const dir = Math.sign(this.ball.x - e.x) || e.facing
-        e.facing = dir
+        const toBall = this.ball.x - e.x
+        let dir = Math.sign(toBall) || e.facing
+        // Ranged walkers keep their distance, as the codex says.
+        if (e.keepAway && Math.abs(toBall) < e.keepAway) dir = -dir
+        e.facing = Math.sign(toBall) || e.facing
         const ahead = this.solidAt(e.x + dir * (e.r + 16), e.y + e.r)
         const here = this.solidAt(e.x, e.y + e.r)
-        if (here && !ahead) e.facing *= -1
-        else e.vx += e.facing * e.moveSpeed * 3.2 * slowMul * dt
+        if (!(here && !ahead)) e.vx += dir * e.moveSpeed * 3.2 * slowMul * dt
         e.vy += 1600 * dt
         e.vx *= Math.exp(-2.4 * dt)
       }
-      if (e.pull && e.alive) {
+      if (e.pull) {
         const d = hypot(this.ball.x - e.x, this.ball.y - e.y)
         if (d < 280 && d > 1) {
-          const f = (e.pull / Math.max(0.55, this.effectiveStats().mass)) * dt
+          const f = (e.pull / Math.max(0.55, ballMass)) * dt
           this.ball.vx += ((e.x - this.ball.x) / d) * f
           this.ball.vy += ((e.y - this.ball.y) / d) * f
         }
@@ -580,23 +725,70 @@ export class Simulation implements EffectApi {
           // heavy core is never asked to fly up to a fight.
           if (s.h < 80 && s.y < 556) continue
           const c = resolveCircleAabb(body, s, 0.04, 0.35)
-          if (c.hit && c.ny < -0.5) onFloor = true
+          if (c.hit && c.ny < -0.5) {
+            onFloor = true
+            // Constructs ride moving floors instead of being scraped off them.
+            if (s.move) {
+              body.x += s.x - s.frameX
+              body.y += s.y - s.frameY
+            }
+          }
         }
         e.x = body.x
         e.y = body.y
         e.vx = body.vx
         e.vy = body.vy
         if (onFloor && Math.abs(e.vy) < 50) e.vy = 0
+      } else if (e.flying) {
+        e.x = clamp(e.x, e.r, this.room.width - e.r)
+        e.y = clamp(e.y, e.r + 10, this.room.height - 120)
       }
-      if (e.shot && e.attackCd <= 0 && e.alive) {
-        this.shoot(e)
-        e.attackCd = e.shot.period
+      this.enemyHazards(e)
+      if (!e.alive) continue
+      if (e.shot) {
+        if (e.windup > 0) {
+          e.windup -= dt
+          if (e.windup <= 0) {
+            this.shoot(e)
+            e.attackCd = e.shot.period / this.heat.attackRate
+          }
+        } else if (e.attackCd <= 0 && e.stun <= 0) {
+          e.windup = 0.35
+        }
       }
       if (e.explodeOnDeath && e.defId === 'cask' && hypot(e.x - this.ball.x, e.y - this.ball.y) < e.r + this.ball.r + 6) {
-        this.kill(e, 'impact')
+        this.kill(e, { target: 'enemy', source: 'hazard', tags: [], effective: 0, overkill: 0, lethal: true }, 'impact')
       }
+      if (this.done) return
     }
     this.separateEnemies()
+  }
+
+  /**
+   * Constructs that touch slag or leave the room die. They drop their loot
+   * where they fell, and anything unreached is collected when the gate opens,
+   * so a room can never be blocked by a construct nobody can reach.
+   */
+  private enemyHazards(e: LiveEnemy): void {
+    const out = e.y > this.room.height + 60 || e.x < -60 || e.x > this.room.width + 60
+    let melted = false
+    if (!e.flying && !out) {
+      for (const h of this.room.hazards) {
+        if (h.type === 'lava' && e.x > h.x && e.x < h.x + h.w && e.y + e.r * 0.5 > h.y) {
+          melted = true
+          break
+        }
+      }
+    }
+    if (!out && !melted) return
+    const record: HitRecord = { target: 'enemy', source: 'hazard', tags: ['fire'], effective: e.hp, overkill: 0, lethal: true }
+    this.dealt.hazard += e.hp
+    if (out) {
+      e.x = clamp(e.x, 40, this.room.width - 40)
+      e.y = Math.min(e.y, this.room.height - 140)
+    }
+    this.floater(e.x, e.y - e.r, melted ? 'MELTED' : 'LOST', '#ffb15a')
+    this.kill(e, record, 'hazard')
   }
 
   private solidAt(x: number, y: number): boolean {
@@ -612,8 +804,9 @@ export class Simulation implements EffectApi {
         if (!b.alive || b.pinned) continue
         const dx = b.x - a.x
         const dy = b.y - a.y
-        const d = hypot(dx, dy) || 0.001
         const min = a.r + b.r
+        if (Math.abs(dx) >= min || Math.abs(dy) >= min) continue
+        const d = hypot(dx, dy) || 0.001
         if (d < min) {
           const p = (min - d) / 2
           a.x -= (dx / d) * p
@@ -636,7 +829,7 @@ export class Simulation implements EffectApi {
       vx: (dx / len) * e.shot.speed,
       vy: (dy / len) * e.shot.speed,
       r: 6,
-      damage: e.shot.damage * (1 + this.opts.heat * 0.08),
+      damage: e.shot.damage * this.heat.enemyDamage,
       life: 3.2,
       friendly: false,
       reflected: false,
@@ -677,7 +870,8 @@ export class Simulation implements EffectApi {
         if (!e.pinned) e.vx -= nx * 120
         e.hitCd = 0.28
         e.stun = Math.max(e.stun, 0.16)
-        if (incoming < 150 && this.phase <= 0) this.hurt(e.contact * 0.35 * (this.opts.gentle ? 0.55 : 1), 'enemy')
+        if (incoming < 150) this.hurt(e.contact * 0.35, 'contact')
+        if (this.done) return
         continue
       }
       if (rel >= -30) continue
@@ -701,6 +895,7 @@ export class Simulation implements EffectApi {
       e.hitCd = TUNE.enemyHitLock
       if (this.phase > 0) continue
       this.resolveHit(e, nx, ny, Math.max(closing, ballToward))
+      if (this.done) return
     }
     this.collideBoss()
   }
@@ -708,8 +903,7 @@ export class Simulation implements EffectApi {
   private resolveHit(e: LiveEnemy, nx: number, ny: number, closing: number): void {
     const stats = this.effectiveStats()
     const crit = this.rng() < stats.critChance
-    const comboMul = this.comboMul()
-    let raw = collisionDamage(stats, closing, comboMul, crit)
+    let raw = collisionDamage(stats, closing, this.comboMul(), crit)
     raw += stats.contact * (0.35 + closing / 900)
     const fromAbove = ny < -0.45
     let blocked = false
@@ -717,67 +911,92 @@ export class Simulation implements EffectApi {
       raw *= 0.18
       blocked = true
     }
-    const dealt = this.damageEnemy(e, raw, this.build.impactTags, { kind: 'impact', source: 'collision', pierce: false })
-    this.fireEvent('onImpact', e.x, e.y, nx, ny, closing, e, 0, dealt)
-    const dirty = clamp(1 - dealt / 48, 0.18, 1)
-    const self = e.contact * stats.selfDamage * dirty * (this.opts.gentle ? 0.55 : 1)
-    if (!blocked) this.hurt(self, 'enemy')
-    else this.hurt(self * 0.4, 'enemy')
+    const armored = !!e.armorGate && raw < e.armorGate
+    const hpBefore = e.hp
+    const dealt = this.damageEnemy(e, raw, this.build.impactTags, { kind: 'impact', source: 'collision' })
+    const killed = !e.alive
+    const clean = !blocked && (killed || closing >= stats.maxSpeed * TUNE.cleanRamRatio)
+    this.fireEvent('onImpact', e.x, e.y, nx, ny, closing, e, dealt)
+    if (this.done) return
+    if (!clean) {
+      const dirty = clamp(1 - dealt / 48, TUNE.minRecoil, 1)
+      this.hurt(e.contact * stats.selfDamage * dirty * (blocked ? 0.4 : 1), 'recoil')
+      if (this.done) return
+    }
     this.squash = 0.12
-    this.listeners.onImpactSfx?.(closing)
+    this.listeners.onImpactSfx?.(closing, blocked ? 'block' : clean ? 'clean' : 'glance')
     this.listeners.onShake?.(clamp(dealt / 18, 1.5, 12))
     if (dealt > 24) this.listeners.onHitstop?.(this.opts.gentle ? 0 : clamp(dealt / 900, 0.02, 0.05))
+    if (clean && dealt > 30) this.listeners.onFlash?.(clamp(dealt / 160, 0.15, 0.5))
     this.burst(e.x, e.y, blocked ? 3 : 6 + dealt / 12, crit ? '#ffe28a' : this.build.visual.trail, 80 + closing)
-    this.floater(e.x, e.y - e.r, `${Math.round(dealt)}${crit ? '!' : ''}${blocked ? ' block' : ''}`, crit ? '#ffe28a' : '#fff6ea')
+    const tag = blocked ? ' BLOCK' : armored ? ' ARMOR' : clean ? '' : ' glance'
+    this.floater(e.x, e.y - e.r, `${Math.round(dealt)}${crit ? '!' : ''}${tag}`, blocked || armored ? '#9aa4b2' : crit ? '#ffe28a' : clean ? '#fff6ea' : '#c3b4a2')
+    if (clean && !killed && hpBefore > 0) this.floater(e.x, e.y - e.r - 18, 'CLEAN', '#8dffc0')
     if (dealt > 8) this.addCombo()
-    this.listeners.onHit?.(dealt)
   }
 
-  damageEnemy(
-    e: FxEnemy,
-    amount: number,
-    tags: Tag[],
-    opts?: { pierce?: boolean; kind?: KillKind; source?: 'collision' | 'ability' | 'effect' },
-  ): number {
+  /**
+   * Every hit on a construct, the Colossus, or a rivet goes through here. The
+   * returned number is damage after armor and resistances, before clamping to
+   * the target's remaining integrity (so a huge ram still reads as huge).
+   */
+  damageEnemy(e: FxEnemy, amount: number, tags: Tag[], info: HitInfo): number {
+    if (!e.alive || !(amount > 0)) return 0
+    if (e.kind === 'boss') return this.hurtBoss(amount, tags, info)
+    if (e.kind === 'rivet') return this.hurtRivet(e as Rivet, amount, tags, info)
     const live = e as LiveEnemy
-    if (!live.alive) return 0
     let dmg = amount
-    if (!opts?.pierce && live.armorGate && dmg < live.armorGate && opts?.kind === 'impact') dmg *= live.armorMul
-    if (tags.includes('lightning')) {
-      const res = live.resists.find((r) => r.tag === 'lightning')
-      if (res) dmg *= res.mul
-    }
-    dmg = Math.max(0, dmg)
-    if (opts?.source === 'ability') this.abilityDamage += dmg
+    if (!info.pierce && live.armorGate && dmg < live.armorGate && info.kind === 'impact') dmg *= live.armorMul
+    for (const res of live.resists) if (tags.includes(res.tag)) dmg *= res.mul
+    const before = live.hp
     live.hp -= dmg
     live.hitFlash = 0.08
-    if (live.hp <= 0) this.kill(live, opts?.kind ?? 'impact')
+    const record = this.record('enemy', tags, info, dmg, before)
+    if (live.hp <= 0) this.kill(live, record, info.kind ?? 'impact')
     return dmg
   }
 
-  private kill(e: LiveEnemy, kind: KillKind): void {
-    if (!e.alive && e.killedBy) return
+  private record(target: HitRecord['target'], tags: Tag[], info: HitInfo, dmg: number, before: number): HitRecord {
+    const effective = Math.max(0, Math.min(dmg, before))
+    const record: HitRecord = {
+      target, source: info.source, ability: info.ability, effectId: info.effectId, tags,
+      effective, overkill: Math.max(0, dmg - before), lethal: before - dmg <= 0,
+    }
+    this.dealt[info.source] += effective
+    if (target !== 'enemy') this.bossDealt[info.source] += effective
+    this.listeners.onHit?.(record)
+    return record
+  }
+
+  private kill(e: LiveEnemy, record: HitRecord, kind: KillKind): void {
+    if (!e.alive) return
     e.alive = false
     e.hp = 0
     e.killedBy = kind
+    this.kills++
     this.burst(e.x, e.y, 10, e.accent, 180)
-    this.pickups.push({ x: e.x, y: e.y, vx: 0, vy: -80, kind: 'cinder', value: e.elite ? 8 : 4, life: 8 })
-    if (this.rng() < 0.08) this.pickups.push({ x: e.x, y: e.y - 10, vx: 40, vy: -120, kind: 'heal', value: 12, life: 8 })
-    this.listeners.onKill?.({ reflected: this.pendingReflected, slam: this.slamKill })
-    this.pendingReflected = false
-    this.slamKill = false
+    this.dropLoot(e.x, e.y, e.elite ? 8 : 4)
+    this.listeners.onKill?.(record, { defId: e.defId, elite: e.elite })
     this.addCombo()
-    this.fireEvent('onKill', e.x, e.y, 0, -1, hypot(this.ball.vx, this.ball.vy), e, 0, 0, kind)
+    this.fireEvent('onKill', e.x, e.y, 0, -1, hypot(this.ball.vx, this.ball.vy), e, 0, kind)
     if (e.split) {
       for (let i = 0; i < e.split.count; i++) {
-        const child = this.makeEnemy(e.split.id, e.x + (i === 0 ? -16 : 16), e.y, false, 1)
+        const child = this.makeEnemy(e.split.id, e.x + (i === 0 ? -16 : 16), Math.min(e.y, this.room.height - 140), false, 1)
         child.vx = i === 0 ? -180 : 180
         child.vy = -160
         this.enemies.push(child)
       }
     }
-    if (e.explodeOnDeath) this.explode(e.x, e.y, e.explodeOnDeath.radius, e.explodeOnDeath.damage, true)
-    if (this.opts.lab) this.labRespawns.push({ id: e.defId, x: e.x, y: 480, elite: e.elite, t: 1.5 })
+    if (e.explodeOnDeath) this.explode(e.x, e.y, e.explodeOnDeath.radius, e.explodeOnDeath.damage * this.heat.enemyDamage, true)
+    if (this.opts.lab && e.origin) this.labRespawns.push({ id: e.defId, x: clamp(e.x, 80, this.room.width - 80), y: 480, elite: e.elite, t: 1.5 })
+  }
+
+  private dropLoot(x: number, y: number, cinders: number): void {
+    // Lab loot is decoration: it fades so a long session cannot pile it up.
+    this.pickups.push({ x, y, vx: 0, vy: -80, r: 7, kind: 'cinder', value: cinders, life: this.opts.lab ? 10 : Infinity, homing: false })
+    if (this.rng() < 0.08 * this.heat.healDrops) {
+      this.pickups.push({ x, y: y - 10, vx: 40, vy: -120, r: 7, kind: 'heal', value: 12, life: 12, homing: false })
+    }
   }
 
   private addCombo(): void {
@@ -793,34 +1012,62 @@ export class Simulation implements EffectApi {
     return 1 + this.combo * step
   }
 
+  objectiveText(): string {
+    const boss = this.boss
+    if (boss && boss.alive) {
+      if (boss.collapse > 0) return 'The floor is failing. Get to solid ground.'
+      if (boss.phase === 1) return `Crack the rivets (${boss.rivets.filter((r) => r.alive).length} left). The plate blunts everything else.`
+      if (boss.phase === 2) return 'The heart is open. Ram it hard, then clear out before the stamp.'
+      return 'No middle floor. Strike from the ledges and the spring.'
+    }
+    return this.room.objective
+  }
+
   private updateBoss(dt: number): void {
     const boss = this.boss
-    if (!boss || boss.hp <= 0) return
+    if (!boss || !boss.alive) return
     boss.hitFlash = Math.max(0, boss.hitFlash - dt)
-    boss.attackCd -= dt
+    boss.recover = Math.max(0, boss.recover - dt)
+    if (boss.collapse > 0) {
+      boss.collapse -= dt
+      if (boss.collapse <= 0) this.collapseFloor()
+    }
+    for (const r of boss.rivets) {
+      r.x = boss.x + r.ox
+      r.y = boss.y + r.oy
+    }
+    if (boss.recover <= 0) boss.attackCd -= dt
     if (boss.attack === 'slam') {
       boss.telegraph -= dt
       if (boss.telegraph <= 0 && boss.slamLive <= 0) {
         boss.slamLive = 0.16
         boss.attack = 'none'
+        boss.recover = 0.9
         this.ring(boss.slamX, 600, 10)
         this.listeners.onShake?.(8)
+      }
+    } else if (boss.attack === 'barrage') {
+      boss.telegraph -= dt
+      if (boss.telegraph <= 0) {
+        boss.attack = 'none'
+        this.barrage(boss)
       }
     }
     if (boss.slamLive > 0) {
       boss.slamLive -= dt
       if (Math.abs(this.ball.x - boss.slamX) < 70 && this.ball.y > 520) this.hurt(18, 'boss')
+      if (this.done) return
     }
     if (boss.attackCd <= 0 && boss.attack === 'none') {
       const wait = boss.phase === 1 ? 2.5 : boss.phase === 2 ? 2.05 : 1.55
-      boss.attackCd = wait - this.opts.heat * 0.12
+      boss.attackCd = Math.max(0.9, wait - this.heat.bossTempo)
       if (this.rng() < 0.55) {
         boss.attack = 'slam'
         boss.telegraph = 0.7
         boss.slamX = clamp(this.ball.x + (this.rng() * 80 - 40), 120, this.room.width - 420)
       } else {
-        boss.attack = 'none'
-        this.barrage(boss)
+        boss.attack = 'barrage'
+        boss.telegraph = 0.45
       }
     }
   }
@@ -836,7 +1083,7 @@ export class Simulation implements EffectApi {
         vx: Math.cos(ang) * sp,
         vy: Math.sin(ang) * sp,
         r: 7,
-        damage: 10 + boss.phase * 2,
+        damage: (10 + boss.phase * 2) * this.heat.enemyDamage,
         life: 4,
         friendly: false,
         reflected: false,
@@ -847,13 +1094,12 @@ export class Simulation implements EffectApi {
 
   private collideBoss(): void {
     const boss = this.boss
-    if (!boss || boss.hp <= 0 || this.phase > 0) return
+    if (!boss || !boss.alive || this.phase > 0) return
+    const stats = this.effectiveStats()
     for (const rivet of boss.rivets) {
       if (!rivet.alive) continue
-      const x = boss.x + rivet.ox
-      const y = boss.y + rivet.oy
-      const d = hypot(this.ball.x - x, this.ball.y - y)
-      if (d < this.ball.r + 16) {
+      const d = hypot(this.ball.x - rivet.x, this.ball.y - rivet.y)
+      if (d < this.ball.r + rivet.r) {
         const closing = hypot(this.ball.vx, this.ball.vy)
         if (closing < 180) {
           this.hurt(6, 'boss')
@@ -861,20 +1107,14 @@ export class Simulation implements EffectApi {
           this.ball.vy *= -0.4
           return
         }
-        const dmg = collisionDamage(this.effectiveStats(), closing, this.comboMul(), false) * 0.7
-        rivet.hp -= dmg
-        this.floater(x, y - 20, Math.round(dmg).toString(), '#ffe7c2')
-        this.listeners.onHit?.(dmg)
-        this.listeners.onImpactSfx?.(closing)
+        const dmg = collisionDamage(stats, closing, this.comboMul(), false) * 0.7
+        const dealt = this.damageEnemy(rivet, dmg, this.build.impactTags, { source: 'collision', kind: 'impact' })
+        this.listeners.onImpactSfx?.(closing, 'clean')
         this.addCombo()
-        if (rivet.hp <= 0) {
-          rivet.alive = false
-          this.burst(x, y, 8, '#ffd29a', 200)
-          boss.hp -= 40
-          this.floater(x, y - 30, 'RIVET', '#ffb15a')
-        }
-        this.bounceOff(x, y)
-        if (boss.rivets.every((r) => !r.alive) && boss.phase === 1) this.setPhase(2)
+        const nx = (this.ball.x - rivet.x) / (d || 1)
+        const ny = (this.ball.y - rivet.y) / (d || 1)
+        this.bounceOff(rivet.x, rivet.y)
+        this.fireEvent('onImpact', rivet.x, rivet.y, nx, ny, closing, rivet, dealt)
         return
       }
     }
@@ -886,34 +1126,85 @@ export class Simulation implements EffectApi {
         this.bounceOff(boss.x, boss.y)
         return
       }
-      let dmg = collisionDamage(this.effectiveStats(), closing, this.comboMul(), this.rng() < this.stats.critChance)
-      if (boss.phase === 1) dmg *= 0.38
-      this.hurtBoss(dmg, false)
+      const crit = this.rng() < stats.critChance
+      const raw = collisionDamage(stats, closing, this.comboMul(), crit)
+      const dealt = this.damageEnemy(boss, raw, this.build.impactTags, { source: 'collision', kind: 'impact' })
+      const nx = (this.ball.x - boss.x) / (d || 1)
+      const ny = (this.ball.y - boss.y) / (d || 1)
       this.bounceOff(boss.x, boss.y)
-      this.fireEvent('onImpact', boss.x, boss.y, (this.ball.x - boss.x) / (d || 1), (this.ball.y - boss.y) / (d || 1), closing, undefined, 0, dmg)
-      this.floater(boss.x, boss.y - 70, Math.round(dmg).toString(), '#fff6ea')
+      this.fireEvent('onImpact', boss.x, boss.y, nx, ny, closing, boss, dealt)
+      if (this.done) return
+      this.floater(boss.x, boss.y - 70, `${Math.round(dealt)}${boss.phase === 1 ? ' PLATE' : ''}`, boss.phase === 1 ? '#9aa4b2' : '#fff6ea')
+      this.listeners.onImpactSfx?.(closing, boss.phase === 1 ? 'block' : 'clean')
       this.addCombo()
-      const self = 12 * this.stats.selfDamage * clamp(1 - dmg / 60, 0.2, 1)
-      this.hurt(self, 'boss')
+      const clean = boss.phase > 1 && closing >= stats.maxSpeed * TUNE.cleanRamRatio
+      if (!clean) this.hurt(12 * stats.selfDamage * clamp(1 - dealt / 60, 0.2, 1), 'recoil')
     }
   }
 
-  private hurtBoss(dmg: number, ability: boolean): void {
+  private bossMul(tags: Tag[], info: HitInfo): number {
+    const boss = this.boss!
+    let mul = 1
+    if (info.source === 'status') mul *= BOSS_RULES.burn
+    else if (info.kind === 'explode') mul *= BOSS_RULES.explosion
+    else if (info.source === 'effect') mul *= BOSS_RULES.effect
+    if (boss.phase === 1) mul *= BOSS_RULES.plate
+    else if (boss.recover > 0) mul *= BOSS_RULES.recovering
+    if (tags.includes('lightning')) mul *= 0.85
+    return mul
+  }
+
+  private hurtBoss(amount: number, tags: Tag[], info: HitInfo): number {
     const boss = this.boss
-    if (!boss || boss.hp <= 0) return
-    if (ability) this.abilityDamage += dmg
+    if (!boss || !boss.alive) return 0
+    const dmg = amount * this.bossMul(tags, info)
+    const before = boss.hp
     boss.hp -= dmg
     boss.hitFlash = 0.1
-    this.listeners.onHit?.(dmg)
-    this.listeners.onShake?.(6)
+    this.record('boss', tags, info, dmg, before)
+    if (info.source !== 'status') this.listeners.onShake?.(4)
+    this.checkBossPhase()
+    return dmg
+  }
+
+  private hurtRivet(r: Rivet, amount: number, tags: Tag[], info: HitInfo): number {
+    const boss = this.boss
+    if (!boss || !boss.alive || !r.alive) return 0
+    let dmg = amount
+    if (info.source === 'status') dmg *= BOSS_RULES.burn
+    else if (info.kind === 'explode') dmg *= BOSS_RULES.explosion
+    const before = r.hp
+    r.hp -= dmg
+    this.record('rivet', tags, info, dmg, before)
+    if (info.source !== 'status') this.floater(r.x, r.y - 20, Math.round(dmg).toString(), '#ffe7c2')
+    if (r.hp <= 0) {
+      r.hp = 0
+      r.alive = false
+      this.burst(r.x, r.y, 8, '#ffd29a', 200)
+      this.floater(r.x, r.y - 30, 'RIVET', '#ffb15a')
+      const bossBefore = boss.hp
+      boss.hp -= BOSS_RULES.rivetBreak
+      this.record('boss', tags, info, BOSS_RULES.rivetBreak, bossBefore)
+      this.listeners.onShake?.(6)
+      if (boss.rivets.every((x) => !x.alive) && boss.phase === 1) this.setPhase(2)
+      this.checkBossPhase()
+    }
+    return dmg
+  }
+
+  private checkBossPhase(): void {
+    const boss = this.boss
+    if (!boss) return
     if (boss.phase === 1 && boss.hp < boss.maxHp * 0.66) this.setPhase(2)
     if (boss.phase < 3 && boss.hp < boss.maxHp * 0.34) this.setPhase(3)
-    if (boss.hp <= 0) {
+    if (boss.hp <= 0 && boss.alive) {
       boss.hp = 0
+      boss.alive = false
       this.exitOpen = true
       this.burst(boss.x, boss.y, 24, '#ffb15a', 300)
       this.listeners.onToast?.('The Colossus breaks. The gate is open.')
-      this.pickups.push({ x: boss.x, y: boss.y, vx: 0, vy: -40, kind: 'cinder', value: 20, life: 12 })
+      this.listeners.onFlash?.(0.6)
+      this.dropLoot(boss.x, boss.y - 40, 20)
     }
   }
 
@@ -921,20 +1212,32 @@ export class Simulation implements EffectApi {
     const boss = this.boss
     if (!boss || boss.phase >= phase) return
     boss.phase = phase
-    this.listeners.onToast?.(phase === 2 ? 'Armor splits. The heart is open.' : 'The floor gives way.')
+    for (const r of boss.rivets) {
+      if (phase > 1 && r.alive) {
+        r.alive = false
+        this.burst(r.x, r.y, 6, '#ffd29a', 160)
+      }
+    }
+    this.listeners.onToast?.(phase === 2 ? 'Armor splits. The heart is open.' : 'The Colossus stamps. The middle floor is cracking.')
+    this.listeners.onBossPhase?.(phase)
     this.listeners.onShake?.(10)
     if (phase === 2 && !boss.added) {
       boss.added = true
       this.enemies.push(this.makeEnemy('spark', boss.x - 200, 300, false, 1))
       this.enemies.push(this.makeEnemy('spark', boss.x - 260, 340, false, 1))
     }
-    if (phase === 3) {
-      for (const s of this.solids) {
-        if (!s.breakable) continue
-        s.alive = false
-        this.room.hazards = [...this.room.hazards, { type: 'lava', x: s.x, y: 640, w: s.w, h: 100, dps: 40 }]
-      }
+    if (phase === 3) boss.collapse = BOSS_RULES.collapseWarning
+  }
+
+  /** Phase three terrain change. Runs only after the visible warning. */
+  private collapseFloor(): void {
+    for (const s of this.solids) {
+      if (!s.breakable || !s.alive) continue
+      s.alive = false
+      this.room.hazards.push({ type: 'lava', x: s.x, y: 640, w: s.w, h: 100, dps: 40 })
+      for (let i = 0; i < 6; i++) this.burst(s.x + (s.w * i) / 5, s.y, 3, '#ffb15a', 160)
     }
+    this.listeners.onShake?.(12)
   }
 
   private bounceOff(x: number, y: number): void {
@@ -944,44 +1247,41 @@ export class Simulation implements EffectApi {
     const nx = dx / d
     const ny = dy / d
     const vn = this.ball.vx * nx + this.ball.vy * ny
+    const rest = this.effectiveStats().restitution
     if (vn < 0) {
-      this.ball.vx -= (1 + this.stats.restitution) * vn * nx
-      this.ball.vy -= (1 + this.stats.restitution) * vn * ny
+      this.ball.vx -= (1 + rest) * vn * nx
+      this.ball.vy -= (1 + rest) * vn * ny
     }
     this.ball.x = x + nx * (this.ball.r + 78)
     this.ball.y = y + ny * (this.ball.r + 78)
   }
 
   private makeBoss(): void {
-    const hp = 860 * (1 + this.opts.heat * 0.14)
+    const hp = 860 * this.heat.bossHp
+    const x = this.room.width - 320
+    const y = 530
+    const rivet = (ox: number, oy: number): Rivet => ({
+      kind: 'rivet', uid: this.uid++, ox, oy, x: x + ox, y: y + oy, vx: 0, vy: 0, r: 16,
+      hp: BOSS_RULES.rivetHp, max: BOSS_RULES.rivetHp, alive: true,
+      burn: 0, burnDps: 0, shock: 0, slow: 0, mass: 99, pinned: true,
+    })
     this.boss = {
-      x: this.room.width - 320,
-      y: 530,
-      r: 64,
-      hp,
-      maxHp: hp,
+      kind: 'boss', uid: this.uid++, x, y, vx: 0, vy: 0, r: 64, mass: 99, pinned: true,
+      hp, maxHp: hp, alive: true, burn: 0, burnDps: 0, shock: 0, slow: 0,
       phase: 1,
-      rivets: [
-        { ox: -36, oy: -78, hp: 70, max: 70, alive: true },
-        { ox: 28, oy: -24, hp: 70, max: 70, alive: true },
-        { ox: -8, oy: 36, hp: 70, max: 70, alive: true },
-      ],
-      attackCd: 1.4,
-      attack: 'none',
-      telegraph: 0,
-      slamX: 400,
-      slamLive: 0,
-      hitFlash: 0,
-      added: false,
+      rivets: [rivet(-36, -78), rivet(28, -24), rivet(-8, 36)],
+      attackCd: 1.4, attack: 'none', telegraph: 0, slamX: 400, slamLive: 0, recover: 0,
+      hitFlash: 0, added: false, collapse: 0,
     }
   }
 
   private updateBullets(dt: number): void {
+    const magnetPull = this.magnetTimer > 0 || this.build.projectile === 'attract'
     for (const b of this.bullets) {
       b.life -= dt
       b.x += b.vx * dt
       b.y += b.vy * dt
-      if (this.magnetTimer > 0 || this.build.projectile === 'attract') {
+      if (magnetPull && !b.friendly) {
         const dx = this.ball.x - b.x
         const dy = this.ball.y - b.y
         const d = hypot(dx, dy) || 1
@@ -992,6 +1292,7 @@ export class Simulation implements EffectApi {
           b.vy += (dy / d) * s
         }
       }
+      if (b.life <= 0) continue
       const hitBall = hypot(b.x - this.ball.x, b.y - this.ball.y) < b.r + this.ball.r
       if (hitBall && !b.friendly) {
         if (this.phase > 0) {
@@ -1005,51 +1306,39 @@ export class Simulation implements EffectApi {
         const sp = hypot(this.ball.vx, this.ball.vy)
         if (this.build.projectile === 'reflect-fast' && sp > 540) {
           this.redirect(b)
-          this.listeners.onBounceSfx?.(sp)
           continue
         }
         this.hurt(b.damage, 'projectile')
         b.life = 0
         this.burst(b.x, b.y, 4, b.color, 80)
+        if (this.done) return
         continue
       }
       if (b.friendly) {
-        for (const e of this.enemies) {
-          if (!e.alive) continue
+        for (const e of this.targets()) {
           if (hypot(b.x - e.x, b.y - e.y) < b.r + e.r) {
-            this.pendingReflected = true
-            this.damageEnemy(e, b.damage + 8, ['projectile'], { pierce: true, kind: 'impact', source: 'effect' })
+            const bonus = e.kind === 'enemy' ? 8 : BOSS_RULES.reflectBonus
+            this.damageEnemy(e, b.damage + bonus, ['projectile'], { source: 'reflect', pierce: true, kind: 'impact' })
             b.life = 0
             break
           }
         }
-        if (this.boss && this.boss.hp > 0 && hypot(b.x - this.boss.x, b.y - this.boss.y) < b.r + this.boss.r) {
-          this.hurtBoss(b.damage + 6, false)
-          b.life = 0
-        }
       }
     }
-    this.bullets = this.bullets.filter((b) => b.life > 0 && b.x > -40 && b.x < this.room.width + 40 && b.y < this.room.height + 80)
+    this.bullets = this.bullets.filter((b) => b.life > 0 && b.x > -40 && b.x < this.room.width + 40 && b.y < this.room.height + 80 && b.y > -200)
   }
 
   private redirect(b: Bullet): void {
     let tx = this.facing * 400
     let ty = 0
     let best = 1e9
-    for (const e of this.enemies) {
-      if (!e.alive) continue
+    for (const e of this.targets()) {
+      if (e.kind === 'rivet') continue
       const d = hypot(e.x - this.ball.x, e.y - this.ball.y)
       if (d < best) {
         best = d
         tx = e.x - b.x
         ty = e.y - b.y
-      }
-    }
-    if (this.boss && this.boss.hp > 0) {
-      const d = hypot(this.boss.x - this.ball.x, this.boss.y - this.ball.y)
-      if (d < best) {
-        tx = this.boss.x - b.x
-        ty = this.boss.y - b.y
       }
     }
     const len = hypot(tx, ty) || 1
@@ -1059,62 +1348,109 @@ export class Simulation implements EffectApi {
     b.reflected = true
     b.life = 2.4
     b.color = '#eafff6'
+    this.listeners.onReflectSfx?.()
+    this.ring(b.x, b.y, 6)
   }
 
   private updatePickups(dt: number): void {
     const magnet = (this.build.tags.magnetic ?? 0) > 0 || this.magnetTimer > 0
     for (const p of this.pickups) {
       p.life -= dt
-      p.vy += 900 * dt
-      p.x += p.vx * dt
-      p.y += p.vy * dt
-      if (magnet) {
-        const dx = this.ball.x - p.x
-        const dy = this.ball.y - p.y
-        const d = hypot(dx, dy) || 1
-        if (d < 280) {
+      if (this.exitOpen) p.homing = true
+      const dx = this.ball.x - p.x
+      const dy = this.ball.y - p.y
+      const d = hypot(dx, dy) || 1
+      if (p.homing) {
+        // Once the gate opens every drop flies to the ball: no waiting around.
+        const speed = 900
+        p.vx = (dx / d) * speed
+        p.vy = (dy / d) * speed
+        p.x += p.vx * dt
+        p.y += p.vy * dt
+      } else {
+        p.vy += 900 * dt
+        if (magnet && d < 280) {
           p.vx += (dx / d) * 700 * dt
           p.vy += (dy / d) * 700 * dt
         }
+        p.x += p.vx * dt
+        p.y += p.vy * dt
+        const body: Body = { x: p.x, y: p.y, vx: p.vx, vy: p.vy, r: p.r, spin: 0 }
+        for (const s of this.solids) {
+          if (!s.alive) continue
+          const c = resolveCircleAabb(body, s, 0.3, 0.6)
+          if (c.hit && c.ny < -0.5 && s.move) {
+            body.x += s.x - s.frameX
+            body.y += s.y - s.frameY
+          }
+        }
+        // Loot floats on slag: visible, reachable at a cost, and collected at the gate.
+        for (const h of this.room.hazards) {
+          if (h.type !== 'lava') continue
+          if (body.x > h.x && body.x < h.x + h.w && body.y + body.r > h.y && body.y < h.y + h.h) {
+            body.y = h.y - body.r
+            if (body.vy > 0) body.vy = 0
+            body.vx *= Math.exp(-3 * dt)
+          }
+        }
+        // Nothing is lost to a pit: it waits at the lip of the room.
+        if (body.y > this.room.height - body.r) {
+          body.y = this.room.height - body.r
+          body.vy = 0
+        }
+        p.x = body.x
+        p.y = body.y
+        p.vx = body.vx
+        p.vy = body.vy
       }
-      if (p.y > 640) {
-        p.y = 640
-        p.vy *= -0.3
-      }
-      if (hypot(p.x - this.ball.x, p.y - this.ball.y) < this.ball.r + 12) {
-        p.life = 0
-        if (p.kind === 'cinder') this.cinderPocket += p.value
-        else this.heal(p.value)
-        this.burst(p.x, p.y, 4, p.kind === 'cinder' ? '#ffb15a' : '#7dffb3', 80)
-      }
+      if (hypot(p.x - this.ball.x, p.y - this.ball.y) < this.ball.r + 12) this.collect(p)
     }
     this.pickups = this.pickups.filter((p) => p.life > 0)
   }
 
-  /** Cinders collected this room, drained by the game. */
-  cinderPocket = 0
+  private collect(p: Pickup): void {
+    if (p.life <= 0) return
+    p.life = 0
+    if (p.kind === 'cinder') this.cinderPocket += p.value
+    else this.heal(p.value)
+    this.burst(p.x, p.y, 4, p.kind === 'cinder' ? '#ffb15a' : '#7dffb3', 80)
+  }
+
+  /** Credit everything still on the floor. Called once when the room is cleared. */
+  collectRemaining(): void {
+    for (const p of this.pickups) {
+      if (p.life <= 0) continue
+      if (p.kind === 'cinder') this.cinderPocket += p.value
+      else this.hp = Math.min(this.maxHp, this.hp + p.value)
+      p.life = 0
+    }
+    this.pickups = []
+  }
 
   private updateHazards(dt: number): void {
-    // rewrite pickup cinders cleanly — I'll fix pocket in the loop below by redoing collection.
-    for (const h of this.room.hazards) {
+    const hazards = this.room.hazards
+    for (let i = 0; i < hazards.length; i++) {
+      const h = hazards[i]!
       if (h.type === 'lava' && overlap(this.ball, h)) {
-        const dr = this.effectiveStats().damageReduction
-        const d = (h.dps ?? 34) * dt * (1 - dr) * (this.opts.gentle ? 0.5 : 1)
-        this.hp -= d
-        this.roomDamage += d
-        if (this.ball.vy > 40) this.ball.vy -= 500 * dt
+        this.hurt((h.dps ?? 34) * dt, 'lava')
+        // Slag spits the ball back out: a mistake costs integrity, not the run.
+        if (this.slagCd <= 0 && this.ball.vy > -200) {
+          this.slagCd = 0.35
+          this.ball.vy = -Math.max(700, Math.abs(hopVelocity(this.effectiveStats())) * 1.15)
+          this.hurt((h.dps ?? 34) * 0.25, 'lava')
+          this.burst(this.ball.x, h.y, 8, '#ff6a2a', 160)
+          this.listeners.onShake?.(3)
+        }
         this.burst(this.ball.x, this.ball.y, 1, '#ff6a2a', 40)
-        if (this.hp <= 0) this.die('lava')
-      } else if (h.type === 'spikes' && overlap(this.ball, h) && this.phase <= 0) {
-        this.hurt(h.damage ?? 12, 'spike')
+      } else if (h.type === 'spikes' && overlap(this.ball, h)) {
+        this.hurt(h.damage ?? 12, 'spikes')
         this.ball.vy = Math.min(this.ball.vy, hopVelocity(this.effectiveStats()) * 0.75)
       } else if (h.type === 'crusher') {
         const pose = crusherPose(h, this.time)
         const rect = { x: h.x, y: pose.y, w: h.w, h: h.h }
         if (pose.smashing && overlap(this.ball, rect)) {
-          const key = this.room.hazards.indexOf(h)
-          if (this.crusherHits.get(key) !== pose.cycle) {
-            this.crusherHits.set(key, pose.cycle)
+          if (this.crusherHits.get(i) !== pose.cycle) {
+            this.crusherHits.set(i, pose.cycle)
             this.hurt(h.damage ?? 22, 'crusher')
             this.listeners.onShake?.(8)
           }
@@ -1132,7 +1468,7 @@ export class Simulation implements EffectApi {
             vx: fromLeft ? sp : -sp,
             vy: 40 + this.rng() * 40,
             r: 6,
-            damage: 9,
+            damage: 9 * this.heat.enemyDamage,
             life: 4,
             friendly: false,
             reflected: false,
@@ -1140,23 +1476,21 @@ export class Simulation implements EffectApi {
           })
         }
       } else if (h.type === 'geyser') {
-        const period = h.period ?? 2.4
-        const t = ((this.time + (h.phase ?? 0)) % period + period) % period
-        const erupt = t > period - 0.28
-        if (erupt && overlap(this.ball, { x: h.x, y: h.y - 80, w: h.w, h: h.h + 80 })) {
-          this.hurt(16 * dt * 3, 'lava')
+        if (geyserPhase(h, this.time).erupt && overlap(this.ball, { x: h.x, y: h.y - 80, w: h.w, h: h.h + 80 })) {
+          this.hurt(48 * dt, 'geyser')
           this.ball.vy = Math.min(this.ball.vy, -200)
         }
       }
+      if (this.done) return
     }
   }
 
   private tickStatus(dt: number): void {
-    for (const e of this.enemies) {
-      if (!e.alive || e.burn <= 0) continue
+    for (const e of this.targets()) {
+      if (e.burn <= 0) continue
       e.burn -= dt
-      const dealt = this.damageEnemy(e, e.burnDps * dt, ['fire'], { pierce: true, kind: 'burn', source: 'effect' })
-      if (dealt > 0 && this.rng() < dt * 8) this.burst(e.x, e.y - e.r, 1, '#ff6a2a', 30)
+      const dealt = this.damageEnemy(e, e.burnDps * dt, ['fire'], { source: 'status', pierce: true, kind: 'burn' })
+      if (dealt > 0 && this.fx() < dt * 8) this.burst(e.x, e.y - e.r, 1, '#ff6a2a', 30)
     }
   }
 
@@ -1167,15 +1501,14 @@ export class Simulation implements EffectApi {
       return
     }
     if (this.room.type === 'boss') {
-      this.exitOpen = !!this.boss && this.boss.hp <= 0
+      this.exitOpen = !!this.boss && !this.boss.alive
       return
     }
-    const alive = this.enemies.some((e) => e.alive)
-    if (!alive) this.exitOpen = true
+    if (!this.enemies.some((e) => e.alive)) this.exitOpen = true
   }
 
   private tryExit(): void {
-    if (!this.exitOpen || this.opts.lab) return
+    if (!this.exitOpen || this.opts.lab || this.done) return
     const ex = this.room.exit
     const inside = this.ball.x > ex.x && this.ball.x < ex.x + ex.w && this.ball.y > ex.y && this.ball.y < ex.y + ex.h
     if (!inside) return
@@ -1187,97 +1520,128 @@ export class Simulation implements EffectApi {
       }
     }
     this.ended = 'clear'
-    this.listeners.onClear?.()
   }
 
   private updateRespawns(dt: number): void {
+    if (!this.labRespawns.length) return
     for (const r of this.labRespawns) r.t -= dt
     const ready = this.labRespawns.filter((r) => r.t <= 0)
     this.labRespawns = this.labRespawns.filter((r) => r.t > 0)
-    for (const r of ready) this.enemies.push(this.makeEnemy(r.id, r.x, r.y, r.elite, 1))
+    for (const r of ready) this.enemies.push({ ...this.makeEnemy(r.id, r.x, r.y, r.elite, 1), origin: true })
   }
 
-  hurt(amount: number, cause: string): void {
-    if (this.ended !== 'play') return
-    if (amount < 900 && this.phase > 0 && cause !== 'lava' && cause !== 'crusher' && cause !== 'pit') return
-    if (amount < 900 && this.hurtLock > 0 && cause !== 'pit' && cause !== 'lava') return
-    if (this.opts.god && (cause === 'pit' || cause === 'lava')) {
-      this.ball.x = this.room.player.x
-      this.ball.y = this.room.player.y
-      this.ball.vx = 0
-      this.ball.vy = -200
-      this.hp = Math.max(this.hp, 1)
-      return
+  private respawnBall(): void {
+    this.ball.x = this.room.player.x
+    this.ball.y = this.room.player.y
+    this.ball.vx = 0
+    this.ball.vy = -200
+    this.prevX = this.ball.x
+    this.prevY = this.ball.y
+  }
+
+  /**
+   * The single damage pipeline for the ball. Returns integrity actually lost.
+   * See DAMAGE_RULES for which sources armor, phase, and the hit window affect.
+   */
+  hurt(amount: number, source: DamageSource): number {
+    if (this.done || !(amount > 0)) return 0
+    const rule = DAMAGE_RULES[source]
+    if (rule.instant) {
+      if (this.opts.god) {
+        this.respawnBall()
+        this.listeners.onToast?.('The lab catches the shell.')
+        return 0
+      }
+      const lost = this.hp
+      this.taken[source] += lost
+      this.roomDamage += lost
+      this.die(source)
+      return lost
     }
+    if (rule.phaseable && this.phase > 0) return 0
+    if (rule.lock && this.hurtLock > 0) return 0
     let d = amount
+    if (rule.mitigated) d *= 1 - this.effectiveStats().damageReduction
+    if (this.opts.gentle) d *= 0.55
+    d *= this.opts.assist ?? 1
     if (this.shield > 0) {
       const used = Math.min(this.shield, d)
       this.shield -= used
       d -= used
     }
-    if (d <= 0) return
+    if (rule.lock) this.hurtLock = TUNE.playerHurtLock
+    if (d <= 0) return 0
     this.hp -= d
     this.roomDamage += d
-    if (cause !== 'lava') this.hurtLock = TUNE.playerHurtLock
-    this.listeners.onHurt?.()
-    if (this.hp <= this.maxHp * 0.32) this.fireEvent('onLowHp', this.ball.x, this.ball.y, 0, -1, 0)
+    this.taken[source] += d
+    this.listeners.onHurt?.(source, d)
+    this.fireEvent('onDamaged', this.ball.x, this.ball.y, 0, -1, d)
+    // Low-integrity effects (Second Wind) resolve before the lethal check,
+    // so a once-per-room weld can catch an otherwise fatal hit.
+    if (this.hp <= this.maxHp * TUNE.lowHp) this.fireEvent('onLowHp', this.ball.x, this.ball.y, 0, -1, 0)
     if (this.hp <= 0) {
       if (this.opts.god) {
         this.hp = this.maxHp * 0.65
+        if (source === 'lava' || source === 'geyser') this.respawnBall()
         this.listeners.onToast?.('The lab catches the shell.')
-        return
+        return d
       }
-      this.die(cause)
+      this.die(source)
     }
+    return d
   }
 
-  private die(cause: string): void {
-    if (this.ended !== 'play') return
+  get lowHp(): boolean {
+    return this.hp <= this.maxHp * TUNE.lowHp
+  }
+
+  private die(cause: DamageSource): void {
+    if (this.done) return
     this.hp = 0
     this.ended = 'dead'
     this.cause = cause
-    this.listeners.onDeath?.(cause)
   }
 
   heal(n: number): void {
+    if (this.done || !(n > 0)) return
     this.hp = Math.min(this.maxHp, this.hp + n)
   }
 
   addEnergy(n: number): void {
+    if (this.done) return
     this.energy = clamp(this.energy + n, 0, this.effectiveStats().energyMax)
   }
 
   addShield(n: number): void {
+    if (this.done) return
     this.shield = Math.min(60, this.shield + n)
   }
 
-  explode(x: number, y: number, radius: number, damage: number, hurtSelf: boolean): void {
+  explode(x: number, y: number, radius: number, damage: number, hurtSelf: boolean, effectId?: string): void {
+    if (this.done) return
     this.ring(x, y, 16)
     this.burst(x, y, 12, '#ffb15a', 240)
     this.listeners.onShake?.(7)
-    for (const e of this.enemies) {
-      if (!e.alive) continue
+    for (const e of this.targets()) {
       if (hypot(e.x - x, e.y - y) <= radius + e.r) {
-        this.damageEnemy(e, damage, ['explosive', 'area'], { pierce: true, kind: 'explode', source: 'effect' })
+        this.damageEnemy(e, damage, ['explosive', 'area'], { source: 'effect', effectId, pierce: true, kind: 'explode' })
         this.knockback(e, e.x - x, e.y - y, 300)
       }
-    }
-    if (this.boss && this.boss.hp > 0 && hypot(this.boss.x - x, this.boss.y - y) < radius + this.boss.r) {
-      this.hurtBoss(damage * 0.65, false)
     }
     if (hurtSelf && hypot(this.ball.x - x, this.ball.y - y) <= radius * 0.75) this.hurt(Math.min(26, damage * 0.45), 'explosion')
   }
 
-  chain(x: number, y: number, jumps: number, range: number, damage: number): void {
+  chain(x: number, y: number, jumps: number, range: number, damage: number, effectId?: string): void {
+    if (this.done) return
     const hit = new Set<number>()
     let cx = x
     let cy = y
     for (let i = 0; i < jumps; i++) {
-      let best: LiveEnemy | undefined
+      let best: FxEnemy | undefined
       let bestD = range
-      for (const e of this.enemies) {
-        if (!e.alive || hit.has(e.uid)) continue
-        const d = hypot(e.x - cx, e.y - cy)
+      for (const e of this.targets()) {
+        if (hit.has(e.uid)) continue
+        const d = Math.max(0, hypot(e.x - cx, e.y - cy) - (e.kind === 'boss' ? e.r : 0))
         if (d < bestD) {
           best = e
           bestD = d
@@ -1286,46 +1650,57 @@ export class Simulation implements EffectApi {
       if (!best) break
       hit.add(best.uid)
       this.arc(cx, cy, best.x, best.y)
-      this.damageEnemy(best, damage * (1 - i * 0.18), ['lightning'], { pierce: true, kind: 'impact', source: 'effect' })
+      this.damageEnemy(best, damage * (1 - i * 0.18), ['lightning'], { source: 'effect', effectId, pierce: true, kind: 'impact' })
       cx = best.x
       cy = best.y
     }
   }
 
-  attract(radius: number, strength: number, target: 'projectile' | 'pickup' | 'enemy'): void {
+  attract(radius: number, strength: number, target: 'projectile' | 'pickup' | 'enemy', dt: number): void {
     if (target === 'projectile') {
       for (const b of this.bullets) {
+        if (b.friendly) continue
         const dx = this.ball.x - b.x
         const dy = this.ball.y - b.y
         const d = hypot(dx, dy) || 1
         if (d < radius) {
-          b.vx += (dx / d) * strength * 0.016
-          b.vy += (dy / d) * strength * 0.016
+          b.vx += (dx / d) * strength * dt
+          b.vy += (dy / d) * strength * dt
         }
       }
-    } else if (target === 'enemy') {
+    } else if (target === 'pickup') {
+      for (const p of this.pickups) {
+        const dx = this.ball.x - p.x
+        const dy = this.ball.y - p.y
+        const d = hypot(dx, dy) || 1
+        if (d < radius) {
+          p.vx += (dx / d) * strength * dt
+          p.vy += (dy / d) * strength * dt
+        }
+      }
+    } else {
       for (const e of this.enemies) {
         if (!e.alive || e.pinned) continue
         const dx = this.ball.x - e.x
         const dy = this.ball.y - e.y
         const d = hypot(dx, dy) || 1
         if (d < radius) {
-          e.vx += (dx / d) * strength * 0.01
-          e.vy += (dy / d) * strength * 0.01
+          e.vx += (dx / d) * strength * 0.6 * dt
+          e.vy += (dy / d) * strength * 0.6 * dt
         }
       }
     }
   }
 
   knockback(e: FxEnemy, nx: number, ny: number, force: number): void {
-    const live = e as LiveEnemy
-    if (live.pinned) return
+    if (e.pinned || e.kind !== 'enemy') return
     const len = hypot(nx, ny) || 1
-    live.vx += (nx / len) * (force / Math.max(0.4, live.mass))
-    live.vy += (ny / len) * (force / Math.max(0.4, live.mass)) * 0.6
+    e.vx += (nx / len) * (force / Math.max(0.4, e.mass))
+    e.vy += (ny / len) * (force / Math.max(0.4, e.mass)) * 0.6
   }
 
   applyStatus(e: FxEnemy, status: 'burn' | 'shock' | 'slow', duration: number, magnitude: number): void {
+    if (!e.alive) return
     if (status === 'burn') {
       e.burn = Math.max(e.burn, duration)
       e.burnDps = Math.max(e.burnDps, magnitude)
@@ -1343,6 +1718,7 @@ export class Simulation implements EffectApi {
       this.ball.vx += (this.ball.vx / sp) * amount
       this.ball.vy += (this.ball.vy / sp) * amount
     }
+    this.boost = Math.max(this.boost, 0.25)
   }
 
   controlTax(duration: number, mul: number): void {
@@ -1351,10 +1727,11 @@ export class Simulation implements EffectApi {
   }
 
   addInstability(n: number): void {
+    if (this.done) return
     this.instability = Math.min(100, this.instability + n)
     if (this.instability >= 100) {
       this.instability = 0
-      this.explode(this.ball.x, this.ball.y, 150, 62, true)
+      this.explode(this.ball.x, this.ball.y, 150, 62, true, 'volatile-vent')
       this.listeners.onToast?.('The core vents.')
     }
   }
@@ -1366,27 +1743,30 @@ export class Simulation implements EffectApi {
   }
 
   private fireEvent(
-    event: 'onImpact' | 'onBounce' | 'onKill' | 'onTick' | 'onLand' | 'onRoomStart' | 'onLowHp' | 'onCombo' | 'onAbility',
+    event: HookEvent,
     x: number,
     y: number,
     nx: number,
     ny: number,
     speed: number,
     enemy?: FxEnemy,
-    dt = 0.016,
     dealt = 0,
     killedBy?: KillKind,
+    dt = this.dt,
   ): void {
+    if (this.done) return
     triggerEffects(this.build.effects, event, this, {
-      x, y, nx, ny, speed, impact: dealt || collisionDamage(this.effectiveStats(), speed, this.comboMul(), false),
+      event, x, y, nx, ny, speed, impact: dealt || collisionDamage(this.effectiveStats(), speed, this.comboMul(), false),
       enemy, dealt, killedBy, combo: this.combo, dt,
     })
   }
 
   private makeEnemy(id: string, x: number, y: number, elite: boolean, scale: number): LiveEnemy {
-    const def = ENEMY_MAP[id] ?? ENEMY_MAP['grunt']!
-    const hp = def.hp * scale * (elite ? 1.35 : 1)
+    const def = ENEMY_MAP[id]
+    if (!def) throw new Error(`Unknown construct: ${id}`)
+    const hp = def.hp * scale * (elite ? 1.35 * this.heat.eliteHp : 1)
     return {
+      kind: 'enemy',
       uid: this.uid++,
       defId: def.id,
       name: elite ? `Elite ${def.name}` : def.name,
@@ -1394,25 +1774,26 @@ export class Simulation implements EffectApi {
       hp, maxHp: hp, alive: true,
       burn: 0, burnDps: 0, shock: 0, slow: 0,
       mass: def.mass, pinned: !!def.pinned,
-      facing: -1, stun: 0, hitCd: 0, attackCd: 0.6, elite,
+      facing: -1, stun: 0, hitCd: 0, attackCd: 0.6 + this.rng() * 0.6, windup: 0, elite,
       flying: !!def.flying, shield: !!def.shield, shieldBreak: def.shieldBreak ?? 36,
       armorGate: def.armorGate ?? 0, armorMul: def.armorMul ?? 1,
-      contact: def.contact * (1 + this.opts.depth * 0.04 + this.opts.heat * 0.08),
+      contact: def.contact * (1 + this.opts.depth * 0.04) * this.heat.enemyDamage,
       color: def.color, accent: def.accent, shape: def.shape, behavior: def.behavior,
       moveSpeed: def.speed * (elite ? 1.08 : 1),
-      resists: def.resists ?? [],
-      split: def.split, explodeOnDeath: def.explode, shot: def.shot, pull: def.pull,
-      hitFlash: 0, blinkCd: 0,
+      resists: def.resists ? def.resists.map((r) => ({ ...r })) : [],
+      split: def.split, explodeOnDeath: def.explode, shot: def.shot, keepAway: def.keepAway, pull: def.pull,
+      hitFlash: 0, blinkCd: 0, origin: false,
     }
   }
 
   private burst(x: number, y: number, n: number, color: string, speed: number): void {
-    for (let i = 0; i < n; i++) {
-      const a = this.rng() * Math.PI * 2
-      const s = speed * (0.3 + this.rng())
+    const count = Math.round(n * this.fxLevel)
+    for (let i = 0; i < count; i++) {
+      const a = this.fx() * Math.PI * 2
+      const s = speed * (0.3 + this.fx())
       this.particles.push({
         x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 40,
-        life: 0.25 + this.rng() * 0.3, max: 0.5, size: 2 + this.rng() * 2.5,
+        life: 0.25 + this.fx() * 0.3, max: 0.5, size: 2 + this.fx() * 2.5,
         color, kind: 'spark',
       })
     }

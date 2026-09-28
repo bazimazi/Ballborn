@@ -1,6 +1,7 @@
 import type { EnemyDef } from '../types'
+import { deepFreeze } from '../util'
 
-export const ENEMIES: EnemyDef[] = [
+export const ENEMIES: EnemyDef[] = deepFreeze([
   {
     id: 'grunt', name: 'Cinder Grunt', behavior: 'walk', shape: 'blob',
     hp: 62, r: 18, mass: 1, speed: 150, contact: 10,
@@ -12,7 +13,7 @@ export const ENEMIES: EnemyDef[] = [
     id: 'bolt', name: 'Forge Bolt', behavior: 'walk', shape: 'diamond',
     hp: 48, r: 16, mass: 0.8, speed: 90, contact: 8,
     color: '#6aa7c8', accent: '#d5f4ff',
-    shot: { period: 1.7, speed: 280, damage: 9, color: '#b9ecff' },
+    shot: { period: 1.7, speed: 280, damage: 9, color: '#b9ecff' }, keepAway: 240,
     codex: 'Keeps a gap and throws slow rivets.',
     question: 'Dash, a rubber reflection, or a magnet turns its own work against the room.',
   },
@@ -98,6 +99,6 @@ export const ENEMIES: EnemyDef[] = [
     codex: 'An elite of the foundry. Shield, armor, and a body that expects you to earn the hit.',
     question: 'Overhead hits and armor-breaking mass shine. A pure lightning build will scrape.',
   },
-]
+])
 
 export const ENEMY_MAP: Record<string, EnemyDef> = Object.fromEntries(ENEMIES.map((e) => [e.id, e]))

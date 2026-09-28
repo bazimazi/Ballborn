@@ -1,6 +1,7 @@
 import type { SynergyDef } from '../types'
+import { deepFreeze } from '../util'
 
-export const SYNERGIES: SynergyDef[] = [
+export const SYNERGIES: SynergyDef[] = deepFreeze([
   {
     id: 'mass-hammer',
     name: 'Mass Hammer',
@@ -55,13 +56,13 @@ export const SYNERGIES: SynergyDef[] = [
   {
     id: 'wildfire',
     name: 'Wildfire',
-    description: 'Two fire workings in one shell. A burn leaps to a neighbor.',
+    description: 'Two fire workings in one shell. A real hit sets the target burning and the burn leaps to neighbors within reach.',
     requires: [{ tag: 'fire', count: 2 }],
     effects: [{
       id: 'wildfire-spread', event: 'onImpact', minSpeed: 140, cooldown: 0.4,
       actions: [
         { type: 'status', status: 'burn', duration: 2.2, magnitude: 8 },
-        { type: 'area', amount: 6, radius: 92, scale: 'flat', tags: ['fire'] },
+        { type: 'area', amount: 6, radius: 92, scale: 'flat', tags: ['fire'], status: { status: 'burn', duration: 1.6, magnitude: 6 } },
       ],
     }],
   },
@@ -116,7 +117,7 @@ export const SYNERGIES: SynergyDef[] = [
       actions: [{ type: 'heal', amount: 0.05, scale: 'dealt' }],
     }],
   },
-]
+])
 
 export const SYNERGY_MAP: Record<string, SynergyDef> = Object.fromEntries(
   SYNERGIES.map((s) => [s.id, s]),

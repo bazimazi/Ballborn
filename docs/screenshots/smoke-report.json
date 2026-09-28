@@ -1,0 +1,378 @@
+{
+  "browser": "C:/Program Files/Google/Chrome/Application/chrome.exe",
+  "checks": [
+    {
+      "name": "title renders",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "keyboard focus starts on a button",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "ball moved under keyboard input",
+      "ok": true,
+      "detail": "x=1655"
+    },
+    {
+      "name": "tutorial clear reaches the reward screen",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "key 1 takes the first offer and starts room two",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Heavy Core fitted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "tutorial ends on the route map",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "map draws route edges",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a full route reaches victory",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "victory summary shows route and damage breakdown",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "shop purchase fits the part and charges the shown price",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "death reaches the summary",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "death summary names the cause",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Escape backs out of settings",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Escape pauses the lab for editing",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "controller d-pad moves menu focus",
+      "ok": true,
+      "detail": "Launch run -> Replay ignition"
+    },
+    {
+      "name": "controller A activates the focused button",
+      "ok": true,
+      "detail": "play"
+    },
+    {
+      "name": "focus loss pauses the room",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no unreachable or sideways-clipped controls at any tested size",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "lab soak (15 simulated minutes) keeps entity counts bounded",
+      "ok": true,
+      "detail": "{\"minute\":14,\"enemies\":4,\"particles\":8,\"bullets\":2,\"pickups\":0,\"floaters\":0}"
+    },
+    {
+      "name": "no console errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": [],
+  "perf": {
+    "tutorialRoll": {
+      "frames": 301,
+      "p50": 16.699999999999818,
+      "p95": 16.800000000000182,
+      "p99": 16.90000000000009,
+      "max": 17.099999999999454
+    },
+    "labRealtime60s": {
+      "frames": 3601,
+      "p50": 16.69999999999709,
+      "p95": 16.80000000000291,
+      "p99": 16.900000000001455,
+      "max": 18.900000000001455,
+      "particles": 9,
+      "enemies": 3,
+      "voices": 2
+    },
+    "frameCostMs": {
+      "ordinary": {
+        "frames": 601,
+        "p50": 0.3999999985098839,
+        "p95": 0.599999999627471,
+        "p99": 0.7999999988824129,
+        "max": 1
+      },
+      "stress": {
+        "frames": 900,
+        "p50": 0.40000000037252903,
+        "p95": 0.7000000011175871,
+        "p99": 1.099999999627471,
+        "max": 2.099999999627471
+      },
+      "stressEntities": 15,
+      "stressParticles": 28
+    }
+  },
+  "layout": [
+    {
+      "size": "1280x720",
+      "view": "title",
+      "clipped": []
+    },
+    {
+      "size": "1280x720",
+      "view": "map",
+      "clipped": []
+    },
+    {
+      "size": "1280x720",
+      "view": "reward",
+      "clipped": []
+    },
+    {
+      "size": "1280x720",
+      "view": "settings",
+      "clipped": []
+    },
+    {
+      "size": "1920x1080",
+      "view": "title",
+      "clipped": []
+    },
+    {
+      "size": "1920x1080",
+      "view": "map",
+      "clipped": []
+    },
+    {
+      "size": "1920x1080",
+      "view": "reward",
+      "clipped": []
+    },
+    {
+      "size": "1920x1080",
+      "view": "settings",
+      "clipped": []
+    },
+    {
+      "size": "800x600",
+      "view": "title",
+      "clipped": []
+    },
+    {
+      "size": "800x600",
+      "view": "map",
+      "clipped": []
+    },
+    {
+      "size": "800x600",
+      "view": "reward",
+      "clipped": []
+    },
+    {
+      "size": "800x600",
+      "view": "settings",
+      "clipped": []
+    },
+    {
+      "size": "1280x720@125%",
+      "view": "title",
+      "clipped": []
+    },
+    {
+      "size": "1280x720@125%",
+      "view": "map",
+      "clipped": []
+    },
+    {
+      "size": "1280x720@125%",
+      "view": "reward",
+      "clipped": []
+    },
+    {
+      "size": "1280x720@125%",
+      "view": "settings",
+      "clipped": []
+    },
+    {
+      "size": "1280x720@150%",
+      "view": "title",
+      "clipped": []
+    },
+    {
+      "size": "1280x720@150%",
+      "view": "map",
+      "clipped": []
+    },
+    {
+      "size": "1280x720@150%",
+      "view": "reward",
+      "clipped": []
+    },
+    {
+      "size": "1280x720@150%",
+      "view": "settings",
+      "clipped": []
+    }
+  ],
+  "soak": {
+    "simMinutes": 15,
+    "wallSeconds": 0.13810000000149011,
+    "perTickMs": 0.0012787037037175011,
+    "heapDeltaMB": 1.676474,
+    "samples": [
+      {
+        "minute": 0,
+        "enemies": 15,
+        "particles": 40,
+        "bullets": 3,
+        "pickups": 2,
+        "floaters": 0
+      },
+      {
+        "minute": 1,
+        "enemies": 4,
+        "particles": 12,
+        "bullets": 1,
+        "pickups": 1,
+        "floaters": 2
+      },
+      {
+        "minute": 2,
+        "enemies": 4,
+        "particles": 12,
+        "bullets": 2,
+        "pickups": 0,
+        "floaters": 0
+      },
+      {
+        "minute": 3,
+        "enemies": 4,
+        "particles": 8,
+        "bullets": 1,
+        "pickups": 0,
+        "floaters": 0
+      },
+      {
+        "minute": 4,
+        "enemies": 4,
+        "particles": 8,
+        "bullets": 1,
+        "pickups": 0,
+        "floaters": 0
+      },
+      {
+        "minute": 5,
+        "enemies": 4,
+        "particles": 12,
+        "bullets": 1,
+        "pickups": 0,
+        "floaters": 0
+      },
+      {
+        "minute": 6,
+        "enemies": 4,
+        "particles": 8,
+        "bullets": 1,
+        "pickups": 0,
+        "floaters": 0
+      },
+      {
+        "minute": 7,
+        "enemies": 4,
+        "particles": 8,
+        "bullets": 2,
+        "pickups": 0,
+        "floaters": 0
+      },
+      {
+        "minute": 8,
+        "enemies": 4,
+        "particles": 8,
+        "bullets": 1,
+        "pickups": 0,
+        "floaters": 0
+      },
+      {
+        "minute": 9,
+        "enemies": 4,
+        "particles": 8,
+        "bullets": 2,
+        "pickups": 0,
+        "floaters": 0
+      },
+      {
+        "minute": 10,
+        "enemies": 4,
+        "particles": 8,
+        "bullets": 1,
+        "pickups": 0,
+        "floaters": 0
+      },
+      {
+        "minute": 11,
+        "enemies": 3,
+        "particles": 11,
+        "bullets": 1,
+        "pickups": 0,
+        "floaters": 1
+      },
+      {
+        "minute": 12,
+        "enemies": 4,
+        "particles": 8,
+        "bullets": 2,
+        "pickups": 0,
+        "floaters": 0
+      },
+      {
+        "minute": 13,
+        "enemies": 4,
+        "particles": 8,
+        "bullets": 1,
+        "pickups": 0,
+        "floaters": 0
+      },
+      {
+        "minute": 14,
+        "enemies": 4,
+        "particles": 8,
+        "bullets": 2,
+        "pickups": 0,
+        "floaters": 0
+      }
+    ]
+  }
+}

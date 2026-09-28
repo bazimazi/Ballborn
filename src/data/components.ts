@@ -1,4 +1,5 @@
 import type { AbilityDef, ComponentDef, EffectDef, Modifier, StatKey } from '../types'
+import { deepFreeze } from '../util'
 
 const add = (stat: StatKey, value: number): Modifier => ({ stat, op: 'add', value })
 const mul = (stat: StatKey, value: number): Modifier => ({ stat, op: 'mul', value })
@@ -25,7 +26,7 @@ const fireBurn = (id: string, mag: number, dur: number, min = 160): EffectDef =>
   actions: [{ type: 'status', status: 'burn', duration: dur, magnitude: mag }],
 })
 
-export const COMPONENTS: ComponentDef[] = [
+export const COMPONENTS: ComponentDef[] = deepFreeze([
   {
     id: 'balanced-core', name: 'Balanced Core', slot: 'core', rarity: 'common', pool: 'standard',
     tags: ['control'], startsUnlocked: true, unlockCost: 0,
@@ -141,7 +142,7 @@ export const COMPONENTS: ComponentDef[] = [
   {
     id: 'flaming-shell', name: 'Flaming Shell', slot: 'shell', rarity: 'rare', pool: 'standard',
     tags: ['fire'], startsUnlocked: false, unlockCost: 28,
-    description: 'The skin of the ball is a wick. Grazes ignite. Burning constructs panic.',
+    description: 'The skin of the ball is a wick. Even a graze leaves the construct burning.',
     upside: 'Burns on contact, even when the hit is not a full ram.',
     downside: 'The shell runs hot. Less integrity, no armor.',
     modifiers: [add('maxHp', -8)],
@@ -518,17 +519,17 @@ export const COMPONENTS: ComponentDef[] = [
     projectile: 'reflect-fast',
     visual: { shell: '#b8ffe0', pattern: 'rings', material: 'rubber', trail: '#eafff6' },
   },
-]
+])
 
 export const COMPONENT_MAP: Record<string, ComponentDef> = Object.fromEntries(
   COMPONENTS.map((c) => [c.id, c]),
 )
 
-export const STARTER_BUILD: Record<string, string> = {
+export const STARTER_BUILD: Record<string, string> = deepFreeze({
   core: 'balanced-core',
   shell: 'rubber-shell',
   momentum: 'momentum-engine',
   impact: 'crush-impact',
   ability: 'dash',
   passive: 'combo-engine',
-}
+})
