@@ -4,41 +4,50 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Ballborn: a side-view action roguelite where the ball is the build." />
+    <meta name="theme-color" content="#100e0c" />
     <title>Ballborn</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Ccircle cx=%278%27 cy=%278%27 r=%277%27 fill=%27%23ff5a1f%27/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;520;640;760&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;520;640;760;850&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+    <link rel="preload" as="image" href="art/foundry-v1/images/title-foundry.webp" type="image/webp" />
   </head>
   <body>
     <div id="app">
       <canvas id="view" aria-label="Game view" role="img"></canvas>
       <div id="hud" hidden>
         <header class="hud-top">
-          <div class="meter integrity">
-            <div class="meter-label"><span>Integrity <b id="hp-warn" class="warn-tag"></b></span><span id="hp-num"></span></div>
-            <div class="track"><div id="hp-bar"></div></div>
+          <div class="meter integrity" id="hp-meter">
+            <div class="meter-label"><span class="meter-name">Integrity <b id="hp-warn" class="warn-tag"></b></span><span id="hp-num" class="meter-num"></span></div>
+            <div class="track hp-track"><div id="hp-chip" class="chip"></div><div id="hp-bar"></div><div id="shield-bar"></div></div>
           </div>
           <div class="objective">
             <div id="room-name"></div>
             <div id="room-obj"></div>
           </div>
           <div class="resources">
-            <span id="cinders" class="cur cinder"></span>
-            <span id="embers" class="cur ember"></span>
+            <span class="cur cinder" id="cinder-chip" title="Cinders: spent during this run"><img src="art/foundry-v1/icons/currency-cinders.svg" alt="" width="22" height="22" /><span id="cinders"></span></span>
+            <span class="cur ember" title="Embers: kept between runs"><img src="art/foundry-v1/icons/currency-embers.svg" alt="" width="22" height="22" /><span id="embers"></span></span>
           </div>
         </header>
+        <div id="boss-bar" class="boss-bar" hidden>
+          <div class="boss-name"><span>Iron Colossus</span><b id="boss-phase"></b></div>
+          <div class="track boss-track"><div id="boss-chip" class="chip"></div><div id="boss-fill"></div><i style="left:34%"></i><i style="left:66%"></i></div>
+        </div>
+        <div id="combo" class="combo" hidden aria-hidden="true"><b id="combo-num"></b><span>combo</span><div class="combo-timer"><div id="combo-timer"></div></div></div>
+        <div id="banner" class="banner" aria-hidden="true"></div>
         <div id="prompt" class="prompt" hidden></div>
         <footer class="hud-bottom">
           <div id="ability-readout" class="ability-readout">
-            <div class="ability-head"><span id="ability-name">Ability</span><b id="ability-state"></b></div>
-            <div class="track slim cooldown"><div id="ability-bar"></div></div>
-            <div class="track slim energy"><div id="energy-bar"></div></div>
-            <div id="energy-num" class="small"></div>
+            <div class="dial" id="ability-dial"><img src="art/foundry-v1/icons/slot-ability.svg" alt="" width="26" height="26" /><span id="ability-key" class="key"></span></div>
+            <div class="ability-info">
+              <div class="ability-head"><span id="ability-name">Ability</span><b id="ability-state"></b></div>
+              <div class="track slim energy"><div id="energy-bar"></div></div>
+              <div id="energy-num" class="small"></div>
+            </div>
           </div>
           <div class="readouts">
-            <span id="speed-read"></span>
-            <span id="combo-read"></span>
+            <div class="speed-meter" id="speed-meter"><div class="track speed-track"><div id="speed-bar"></div><i class="notch"></i></div><span id="speed-read"></span></div>
             <span id="instability-read"></span>
           </div>
           <div class="build-chip"><span id="archetype"></span> <span class="small muted">Tab: build sheet</span></div>

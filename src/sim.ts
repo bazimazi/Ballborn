@@ -158,7 +158,31 @@ export const BOSS_RULES = {
   collapseWarning: 1.8,
 } as const
 
+/**
+ * Cosmetic notifications for the renderer: where something happened and how
+ * hard. Emitting one never changes simulation state, so replays stay exact.
+ */
+export type FxEvent =
+  | { type: 'hit'; x: number; y: number; nx: number; ny: number; dealt: number; speed: number; clean: boolean; crit: boolean; blocked: boolean; killed: boolean }
+  | { type: 'kill'; x: number; y: number; r: number; color: string; accent: string; elite: boolean; vx: number; vy: number }
+  | { type: 'bounce'; x: number; y: number; nx: number; ny: number; speed: number }
+  | { type: 'hop'; x: number; y: number }
+  | { type: 'spring'; x: number; y: number }
+  | { type: 'hurt'; x: number; y: number; amount: number; source: DamageSource }
+  | { type: 'ability'; kind: AbilityKind; x: number; y: number; vx: number; vy: number }
+  | { type: 'slam'; x: number; y: number; radius: number }
+  | { type: 'explode'; x: number; y: number; radius: number }
+  | { type: 'collect'; x: number; y: number; kind: 'cinder' | 'heal' }
+  | { type: 'rivet'; x: number; y: number }
+  | { type: 'boss-phase'; x: number; y: number; phase: number }
+  | { type: 'boss-down'; x: number; y: number }
+  | { type: 'boss-slam'; x: number; y: number }
+  | { type: 'collapse'; x: number; y: number; w: number }
+  | { type: 'slag'; x: number; y: number }
+  | { type: 'die'; x: number; y: number; cause: DamageSource }
+
 export interface SimListeners {
+  onFx?: (e: FxEvent) => void
   onDiscovery?: (id: string) => void
   onToast?: (text: string) => void
   onShake?: (mag: number) => void
@@ -540,6 +564,7 @@ export class Simulation implements EffectApi {
       this.coyote = 0
       this.grounded = false
       this.burst(this.ball.x, this.ball.y + 8, 4, '#efe7d6', 80)
+      this.emit({ type: 'hop', x: this.ball.x, y: this.ball.y + this.ball.r })
     }
     this.ball.x += this.ball.vx * dt
     this.ball.y += this.ball.vy * dt
@@ -560,6 +585,7 @@ export class Simulation implements EffectApi {
           this.ball.vy = -Math.max(Math.abs(hopVelocity(stats)), 760 / Math.pow(stats.mass, 0.38))
           this.grounded = false
           this.burst(this.ball.x, s.y, 6, '#ffb15a', 160)
+          this.emit({ type: 'spring', x: this.ball.x, y: s.y })
           this.listeners.onBounceSfx?.(500)
         }
         if (this.slamArmed && c.impactSpeed > 220) {
@@ -570,6 +596,7 @@ export class Simulation implements EffectApi {
       if (c.impactSpeed > 120) {
         this.listeners.onBounceSfx?.(c.impactSpeed)
         this.squash = Math.max(this.squash, 0.08)
+        this.emit({ type: 'bounce', x: this.ball.x - c.nx * this.ball.r, y: this.ball.y - c.ny * this.ball.r, nx: c.nx, ny: c.ny, speed: c.impactSpeed })
         this.fireEvent('onBounce', this.ball.x, this.ball.y, c.nx, c.ny, c.impactSpeed)
         if (c.ny < -0.55) this.fireEvent('onLand', this.ball.x, this.ball.y, c.nx, c.ny, c.impactSpeed)
       }
@@ -606,6 +633,8 @@ export class Simulation implements EffectApi {
     this.abilityCd = ability.cooldown
     this.listeners.onAbility?.(ability.kind)
     const stats = this.effectiveStats()
+    const vx0 = this.ball.vx
+    const vy0 = this.ball.vy
     if (ability.kind === 'dash') {
       let dx = input.x
       let dy = input.y
@@ -632,12 +661,14 @@ export class Simulation implements EffectApi {
       this.magnetTimer = 0.55
       this.burst(this.ball.x, this.ball.y, 8, '#9ad7ff', 140)
     }
+    this.emit({ type: 'ability', kind: ability.kind, x: this.ball.x, y: this.ball.y, vx: this.ball.vx - vx0, vy: this.ball.vy - vy0 })
     this.fireEvent('onAbility', this.ball.x, this.ball.y, this.facing, 0, hypot(this.ball.vx, this.ball.vy))
   }
 
   private slamShock(impactSpeed: number): void {
     const stats = this.effectiveStats()
     const dmg = collisionDamage(stats, impactSpeed, this.comboMul(), false) * 0.85
+    this.emit({ type: 'slam', x: this.ball.x, y: this.ball.y + this.ball.r, radius: 120 + impactSpeed * 0.05 })
     this.blastArea(this.ball.x, this.ball.y, 120 + impactSpeed * 0.05, dmg, 'slam')
     this.listeners.onShake?.(Math.min(14, impactSpeed / 80))
     this.listeners.onHitstop?.(0.045)
@@ -924,6 +955,7 @@ export class Simulation implements EffectApi {
       if (this.done) return
     }
     this.squash = 0.12
+    this.emit({ type: 'hit', x: e.x + nx * e.r, y: e.y + ny * e.r, nx, ny, dealt, speed: closing, clean, crit, blocked, killed })
     this.listeners.onImpactSfx?.(closing, blocked ? 'block' : clean ? 'clean' : 'glance')
     this.listeners.onShake?.(clamp(dealt / 18, 1.5, 12))
     if (dealt > 24) this.listeners.onHitstop?.(this.opts.gentle ? 0 : clamp(dealt / 900, 0.02, 0.05))
@@ -975,6 +1007,7 @@ export class Simulation implements EffectApi {
     e.killedBy = kind
     this.kills++
     this.burst(e.x, e.y, 10, e.accent, 180)
+    this.emit({ type: 'kill', x: e.x, y: e.y, r: e.r, color: e.color, accent: e.accent, elite: e.elite, vx: e.vx, vy: e.vy })
     this.dropLoot(e.x, e.y, e.elite ? 8 : 4)
     this.listeners.onKill?.(record, { defId: e.defId, elite: e.elite })
     this.addCombo()
@@ -1044,6 +1077,7 @@ export class Simulation implements EffectApi {
         boss.attack = 'none'
         boss.recover = 0.9
         this.ring(boss.slamX, 600, 10)
+        this.emit({ type: 'boss-slam', x: boss.slamX, y: 608 })
         this.listeners.onShake?.(8)
       }
     } else if (boss.attack === 'barrage') {
@@ -1113,6 +1147,7 @@ export class Simulation implements EffectApi {
         this.addCombo()
         const nx = (this.ball.x - rivet.x) / (d || 1)
         const ny = (this.ball.y - rivet.y) / (d || 1)
+        this.emit({ type: 'hit', x: rivet.x + nx * rivet.r, y: rivet.y + ny * rivet.r, nx, ny, dealt, speed: closing, clean: true, crit: false, blocked: false, killed: !rivet.alive })
         this.bounceOff(rivet.x, rivet.y)
         this.fireEvent('onImpact', rivet.x, rivet.y, nx, ny, closing, rivet, dealt)
         return
@@ -1131,6 +1166,7 @@ export class Simulation implements EffectApi {
       const dealt = this.damageEnemy(boss, raw, this.build.impactTags, { source: 'collision', kind: 'impact' })
       const nx = (this.ball.x - boss.x) / (d || 1)
       const ny = (this.ball.y - boss.y) / (d || 1)
+      this.emit({ type: 'hit', x: boss.x + nx * boss.r, y: boss.y + ny * boss.r, nx, ny, dealt, speed: closing, clean: boss.phase > 1, crit, blocked: boss.phase === 1, killed: !boss.alive })
       this.bounceOff(boss.x, boss.y)
       this.fireEvent('onImpact', boss.x, boss.y, nx, ny, closing, boss, dealt)
       if (this.done) return
@@ -1181,6 +1217,7 @@ export class Simulation implements EffectApi {
       r.hp = 0
       r.alive = false
       this.burst(r.x, r.y, 8, '#ffd29a', 200)
+      this.emit({ type: 'rivet', x: r.x, y: r.y })
       this.floater(r.x, r.y - 30, 'RIVET', '#ffb15a')
       const bossBefore = boss.hp
       boss.hp -= BOSS_RULES.rivetBreak
@@ -1202,6 +1239,7 @@ export class Simulation implements EffectApi {
       boss.alive = false
       this.exitOpen = true
       this.burst(boss.x, boss.y, 24, '#ffb15a', 300)
+      this.emit({ type: 'boss-down', x: boss.x, y: boss.y })
       this.listeners.onToast?.('The Colossus breaks. The gate is open.')
       this.listeners.onFlash?.(0.6)
       this.dropLoot(boss.x, boss.y - 40, 20)
@@ -1220,6 +1258,7 @@ export class Simulation implements EffectApi {
     }
     this.listeners.onToast?.(phase === 2 ? 'Armor splits. The heart is open.' : 'The Colossus stamps. The middle floor is cracking.')
     this.listeners.onBossPhase?.(phase)
+    this.emit({ type: 'boss-phase', x: boss.x, y: boss.y, phase })
     this.listeners.onShake?.(10)
     if (phase === 2 && !boss.added) {
       boss.added = true
@@ -1236,6 +1275,7 @@ export class Simulation implements EffectApi {
       s.alive = false
       this.room.hazards.push({ type: 'lava', x: s.x, y: 640, w: s.w, h: 100, dps: 40 })
       for (let i = 0; i < 6; i++) this.burst(s.x + (s.w * i) / 5, s.y, 3, '#ffb15a', 160)
+      this.emit({ type: 'collapse', x: s.x, y: s.y, w: s.w })
     }
     this.listeners.onShake?.(12)
   }
@@ -1414,6 +1454,7 @@ export class Simulation implements EffectApi {
     if (p.kind === 'cinder') this.cinderPocket += p.value
     else this.heal(p.value)
     this.burst(p.x, p.y, 4, p.kind === 'cinder' ? '#ffb15a' : '#7dffb3', 80)
+    this.emit({ type: 'collect', x: p.x, y: p.y, kind: p.kind })
   }
 
   /** Credit everything still on the floor. Called once when the room is cleared. */
@@ -1439,6 +1480,7 @@ export class Simulation implements EffectApi {
           this.ball.vy = -Math.max(700, Math.abs(hopVelocity(this.effectiveStats())) * 1.15)
           this.hurt((h.dps ?? 34) * 0.25, 'lava')
           this.burst(this.ball.x, h.y, 8, '#ff6a2a', 160)
+          this.emit({ type: 'slag', x: this.ball.x, y: h.y })
           this.listeners.onShake?.(3)
         }
         this.burst(this.ball.x, this.ball.y, 1, '#ff6a2a', 40)
@@ -1575,6 +1617,7 @@ export class Simulation implements EffectApi {
     this.roomDamage += d
     this.taken[source] += d
     this.listeners.onHurt?.(source, d)
+    this.emit({ type: 'hurt', x: this.ball.x, y: this.ball.y, amount: d, source })
     this.fireEvent('onDamaged', this.ball.x, this.ball.y, 0, -1, d)
     // Low-integrity effects (Second Wind) resolve before the lethal check,
     // so a once-per-room weld can catch an otherwise fatal hit.
@@ -1600,6 +1643,7 @@ export class Simulation implements EffectApi {
     this.hp = 0
     this.ended = 'dead'
     this.cause = cause
+    this.emit({ type: 'die', x: this.ball.x, y: this.ball.y, cause })
   }
 
   heal(n: number): void {
@@ -1621,6 +1665,7 @@ export class Simulation implements EffectApi {
     if (this.done) return
     this.ring(x, y, 16)
     this.burst(x, y, 12, '#ffb15a', 240)
+    this.emit({ type: 'explode', x, y, radius })
     this.listeners.onShake?.(7)
     for (const e of this.targets()) {
       if (hypot(e.x - x, e.y - y) <= radius + e.r) {
@@ -1805,6 +1850,10 @@ export class Simulation implements EffectApi {
 
   private arc(x: number, y: number, x2: number, y2: number): void {
     this.particles.push({ x, y, x2, y2, vx: 0, vy: 0, life: 0.12, max: 0.12, size: 2, color: '#d7f4ff', kind: 'arc' })
+  }
+
+  private emit(e: FxEvent): void {
+    this.listeners.onFx?.(e)
   }
 
   private floater(x: number, y: number, text: string, color: string): void {

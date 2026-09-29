@@ -11,7 +11,11 @@ import { previewSwap, routeInfo, salvageValue, type MapNode, type Offer, type Ro
 import type { SaveData, Btn } from './save'
 import { BTNS, DEFAULT_BINDINGS } from './save'
 import type { Simulation } from './sim'
+import { TUNE } from './tune'
 import { escapeHtml as esc, hypot } from './util'
+
+const ICONS = 'art/foundry-v1/icons/'
+const icon = (name: string, size = 22): string => `<img class="ico" src="${ICONS}${name}.svg" alt="" width="${size}" height="${size}" />`
 
 export type Screen =
   | 'title' | 'settings' | 'codex' | 'lab' | 'map' | 'play'
@@ -112,35 +116,138 @@ export class Hud {
     this.el(id).setAttribute(name, value)
   }
 
-  update(sim: Simulation | null, run: RunState | null, build: CompiledBuild | null, save: SaveData, prompt: string, buildOpen: boolean): void {
+  private prop(id: string, name: string, value: string): void {
+    const key = `${id}--${name}`
+    if (this.last.get(key) === value) return
+    this.last.set(key, value)
+    this.el(id).style.setProperty(name, value)
+  }
+
+  private toggle(id: string, cls: string, on: boolean): void {
+    const key = `${id}.${cls}`
+    const v = on ? '1' : ''
+    if (this.last.get(key) === v) return
+    this.last.set(key, v)
+    this.el(id).classList.toggle(cls, on)
+  }
+
+  private show(id: string, on: boolean): void {
+    const el = this.el(id)
+    if (el.hidden === on) el.hidden = !on
+  }
+
+  /** Play a short Web Animation unless the player asked for reduced motion. */
+  private pulse(id: string, frames: Keyframe[], ms: number): void {
+    if (document.body.classList.contains('reduce-motion')) return
+    this.el(id).animate(frames, { duration: ms, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)' })
+  }
+
+  private sim: Simulation | null = null
+  private hpChip = 100
+  private chipHold = 0
+  private bossChip = 100
+  private lastHp = 0
+  private lastCombo = 0
+  private bannerLeft = 0
+
+  /** A big title that slams in and fades: room names, the boss, the open gate. */
+  banner(title: string, sub: string, kind: 'room' | 'boss' | 'clear' | 'phase', portrait = ''): void {
+    const el = this.el('banner')
+    el.innerHTML = `<div class="banner-inner ${kind}">${portrait ? `<img class="portrait" src="${portrait}" alt="" />` : ''}<div class="banner-kicker">${kind === 'boss' ? 'Final hold' : kind === 'clear' ? 'Room clear' : kind === 'phase' ? 'The Colossus shifts' : 'The Foundry'}</div><div class="banner-title">${esc(title)}</div>${sub ? `<div class="banner-sub">${esc(sub)}</div>` : ''}</div>`
+    this.bannerLeft = kind === 'boss' ? 3.2 : kind === 'room' ? 2.4 : 1.6
+  }
+
+  /** Cinders reached the counter. */
+  bumpCinders(): void {
+    this.pulse('cinder-chip', [{ transform: 'scale(1.35)' }, { transform: 'scale(1)' }], 260)
+  }
+
+  update(sim: Simulation | null, run: RunState | null, build: CompiledBuild | null, save: SaveData, prompt: string, buildOpen: boolean, dt = 0): void {
     const playing = !!sim && !!build
     const hud = this.el('hud')
     if (hud.hidden === playing) hud.hidden = !playing
+    if (this.bannerLeft > 0) {
+      this.bannerLeft -= dt
+      if (this.bannerLeft <= 0) this.el('banner').replaceChildren()
+    }
     if (!playing || !sim || !build) return
+    if (sim !== this.sim) {
+      this.sim = sim
+      this.hpChip = (sim.hp / sim.maxHp) * 100
+      this.lastHp = sim.hp
+      this.lastCombo = 0
+      this.bossChip = 100
+    }
     const hpPct = Math.max(0, sim.hp / sim.maxHp) * 100
     const low = sim.lowHp
+    // The chip bar trails behind damage so the size of a hit stays readable.
+    if (sim.hp < this.lastHp - 0.4) {
+      this.chipHold = 0.45
+      if (this.lastHp - sim.hp >= 3) {
+        this.pulse('hp-meter', [{ transform: 'translate(-6px, 2px)' }, { transform: 'translate(5px, -2px)' }, { transform: 'translate(-3px, 1px)' }, { transform: 'none' }], 260)
+        this.toggle('hp-meter', 'hurt', true)
+      }
+    } else if (sim.hp > this.lastHp + 0.4) {
+      this.pulse('hp-meter', [{ filter: 'brightness(1.8)' }, { filter: 'none' }], 400)
+    }
+    this.lastHp = sim.hp
+    this.chipHold -= dt
+    if (this.chipHold <= 0) this.hpChip = Math.max(hpPct, this.hpChip - dt * 70)
+    if (this.hpChip < hpPct) this.hpChip = hpPct
+    if (this.chipHold < 0.2) this.toggle('hp-meter', 'hurt', false)
     this.style('hp-bar', 'width', `${hpPct.toFixed(1)}%`)
-    this.style('hp-bar', 'background', low ? '#ff5d73' : 'linear-gradient(90deg, #ff5a1f, #ffb15a)')
+    this.style('hp-chip', 'width', `${this.hpChip.toFixed(1)}%`)
+    this.style('shield-bar', 'width', `${Math.min(100, (sim.shield / sim.maxHp) * 100).toFixed(1)}%`)
+    this.toggle('hp-meter', 'low', low)
     this.text('hp-num', `${Math.ceil(sim.hp)} / ${Math.ceil(sim.maxHp)}${sim.shield > 0 ? `  +${Math.ceil(sim.shield)} shield` : ''}`)
     this.text('hp-warn', low ? 'CRACKED' : '')
     this.text('room-name', sim.room.name)
     const extra = sim.room.rules?.includes('survival') && !sim.exitOpen ? ` · ${Math.ceil(sim.survivalLeft)} s` : sim.room.rules?.includes('speed-gate') ? ' · carry speed through the gate' : ''
     this.text('room-obj', (sim.exitOpen ? 'Gate open → ' : '') + sim.objectiveText() + extra)
-    this.text('cinders', run ? `▲ ${run.cinders + sim.cinderPocket} cinders` : '')
-    this.text('embers', `◆ ${save.embers} embers`)
+    this.toggle('room-obj', 'open', sim.exitOpen)
+    const cinders = run ? run.cinders + sim.cinderPocket : 0
+    this.text('cinders', run ? `${cinders}` : '')
+    this.attr('cinder-chip', 'aria-label', `${cinders} cinders`)
+    this.text('embers', `${save.embers}`)
+    // Boss integrity lives in the HUD, like every other health bar that matters.
+    const boss = sim.boss
+    this.show('boss-bar', !!boss && boss.alive)
+    if (boss && boss.alive) {
+      const pct = Math.max(0, boss.hp / boss.maxHp) * 100
+      this.bossChip = this.bossChip > pct ? Math.max(pct, this.bossChip - dt * 30) : pct
+      this.style('boss-fill', 'width', `${pct.toFixed(1)}%`)
+      this.style('boss-chip', 'width', `${this.bossChip.toFixed(1)}%`)
+      this.text('boss-phase', `Phase ${boss.phase}${boss.phase === 1 ? ' · plated' : boss.phase === 2 ? ' · heart open' : ' · floor failing'}`)
+      this.attr('boss-bar', 'data-phase', String(boss.phase))
+    }
     const ability = build.ability
     const block = sim.abilityBlock()
     this.text('ability-name', ability ? ability.name : 'No ability')
-    const state = !ability ? '' : block === 'cooldown' ? `Cooling ${sim.abilityCd.toFixed(1)} s` : block === 'energy' ? `Needs ${Math.ceil(ability.energy)} energy` : 'READY'
+    this.text('ability-key', keyName(save.settings.bindings.ability))
+    const state = !ability ? '' : block === 'cooldown' ? `${sim.abilityCd.toFixed(1)} s` : block === 'energy' ? `Needs ${Math.ceil(ability.energy)}` : 'READY'
     this.text('ability-state', state)
+    const readyNow = !!ability && block === null
+    if (readyNow && this.last.get('ability-readout@data-state') !== 'ready') this.pulse('ability-dial', [{ transform: 'scale(1.3)', filter: 'brightness(2)' }, { transform: 'scale(1)', filter: 'none' }], 420)
     this.attr('ability-readout', 'data-state', !ability ? 'none' : block ?? 'ready')
     const cd = ability && sim.abilityCd > 0 ? 1 - sim.abilityCd / ability.cooldown : 1
-    this.style('ability-bar', 'width', `${(Math.max(0, Math.min(1, cd)) * 100).toFixed(0)}%`)
+    this.prop('ability-dial', '--p', `${(Math.max(0, Math.min(1, cd)) * 100).toFixed(0)}%`)
     this.style('energy-bar', 'width', `${((sim.energy / build.stats.energyMax) * 100).toFixed(0)}%`)
     this.text('energy-num', `${Math.floor(sim.energy)} / ${Math.round(build.stats.energyMax)} energy${ability ? ` · costs ${ability.energy}` : ''}`)
     const speed = Math.round(hypot(sim.ball.vx, sim.ball.vy))
-    this.text('speed-read', `Speed ${Math.round(speed / 10) * 10}`)
-    this.text('combo-read', sim.combo > 1 ? `Combo ×${sim.combo}` : '')
+    const ratio = speed / Math.max(1, sim.stats.maxSpeed)
+    const armed = ratio >= TUNE.cleanRamRatio
+    this.style('speed-bar', 'width', `${(Math.min(1, ratio) * 100).toFixed(0)}%`)
+    this.toggle('speed-meter', 'armed', armed)
+    this.text('speed-read', armed ? `RAM READY · ${Math.round(speed / 10) * 10}` : `Speed ${Math.round(speed / 10) * 10}`)
+    // Combo: a big number that pops on every link and drains between them.
+    this.show('combo', sim.combo > 1)
+    if (sim.combo > 1) {
+      this.text('combo-num', `×${sim.combo}`)
+      if (sim.combo > this.lastCombo) this.pulse('combo', [{ transform: `scale(${1.25 + Math.min(0.4, sim.combo * 0.03)}) rotate(-4deg)` }, { transform: 'scale(1) rotate(0)' }], 300)
+      this.style('combo-timer', 'width', `${(Math.max(0, sim.comboTimer / TUNE.comboWindow) * 100).toFixed(0)}%`)
+      this.attr('combo', 'data-tier', sim.combo >= 10 ? '3' : sim.combo >= 6 ? '2' : '1')
+    }
+    this.lastCombo = sim.combo
     this.text('instability-read', sim.instability > 2 ? `Instability ${Math.round(sim.instability)}%` : '')
     this.text('archetype', build.archetype)
     const promptEl = this.el('prompt')
@@ -163,7 +270,7 @@ function sheetHtml(build: CompiledBuild): string {
     <ul class="slot-list">${SLOTS.map((slot) => {
       const id = build.ids[slot]
       const comp = id ? COMPONENT_MAP[id] : undefined
-      return `<li><b>${SLOT_LABEL[slot]}</b> ${comp ? esc(comp.name) : '<span class="muted">Empty</span>'}</li>`
+      return `<li>${icon(`slot-${slot}`, 20)}<b>${SLOT_LABEL[slot]}</b> ${comp ? esc(comp.name) : '<span class="muted">Empty</span>'}</li>`
     }).join('')}</ul>
     ${statTable(build.stats)}
     <p><b>Strengths.</b> ${esc(build.strengths.join(' ') || 'Still forming.')}</p>
@@ -237,9 +344,9 @@ export function screenHtml(view: View): string {
 
 function currencies(save: SaveData, run: RunState | null): string {
   return `<div class="currencies">
-    ${run ? `<span class="cur cinder" title="Cinders: spent during this run">▲ ${run.cinders} cinders</span>` : ''}
-    <span class="cur scrap" title="Scrap: forges new parts in the codex, between runs">■ ${save.scrap} scrap</span>
-    <span class="cur ember" title="Embers: kept between runs, spent on evolutions and fusions">◆ ${save.embers} embers</span>
+    ${run ? `<span class="cur cinder" title="Cinders: spent during this run">${icon('currency-cinders')}${run.cinders} cinders</span>` : ''}
+    <span class="cur scrap" title="Scrap: forges new parts in the codex, between runs">${icon('currency-scrap')}${save.scrap} scrap</span>
+    <span class="cur ember" title="Embers: kept between runs, spent on evolutions and fusions">${icon('currency-embers')}${save.embers} embers</span>
   </div>`
 }
 
@@ -249,20 +356,21 @@ function titleHtml(view: View): string {
   const heats = HEATS.filter((h) => h.id <= heat).map((h) =>
     `<button class="btn ${view.heatPick === h.id ? 'primary' : ''}" data-act="heat" data-arg="${h.id}" aria-pressed="${view.heatPick === h.id}">${h.name}</button>`,
   ).join('')
+  const letters = (word: string, from: number) => word.split('').map((c, i) => `<span style="--i:${from + i}">${c}</span>`).join('')
   return `<div class="title-wrap">
-    <div class="title-lockup panel stack">
+    <div class="title-lockup stack">
       <div class="kicker">Foundry slice</div>
-      <h1>BALL<br>BORN</h1>
-      <p>Build a ball. Feel the build physically. Master it. Break it. Rebuild it.</p>
+      <h1 aria-label="Ballborn"><span class="logo-line">${letters('BALL', 0)}</span><span class="logo-line hot">${letters('BORN', 4)}</span></h1>
+      <p class="tagline">Build a ball. Feel the build physically. Master it. Break it. Rebuild it.</p>
       ${view.saveWarning ? `<p class="warn" role="status">${esc(view.saveWarning)}</p>` : ''}
-      <div class="row">
-        ${view.hasCheckpoint ? '<button class="btn primary" data-act="continue" data-autofocus>Continue run</button>' : ''}
-        <button class="btn ${view.hasCheckpoint ? '' : 'primary'}" data-act="launch" data-arg="run" ${view.hasCheckpoint ? '' : 'data-autofocus'}>${view.hasCheckpoint ? 'New run' : 'Launch run'}</button>
+      <nav class="title-menu" aria-label="Main menu">
+        ${view.hasCheckpoint ? '<button class="btn primary big" data-act="continue" data-autofocus>Continue run</button>' : ''}
+        <button class="btn big ${view.hasCheckpoint ? '' : 'primary'}" data-act="launch" data-arg="run" ${view.hasCheckpoint ? '' : 'data-autofocus'}>${view.hasCheckpoint ? 'New run' : 'Launch run'}</button>
         <button class="btn" data-act="launch" data-arg="tutorial">${view.save.seenTutorial ? 'Replay ignition' : 'First ignition'}</button>
         <button class="btn" data-act="lab">Ball lab</button>
         <button class="btn" data-act="codex">Codex</button>
         <button class="btn" data-act="settings">Settings</button>
-      </div>
+      </nav>
       ${heat > 0 ? `<div class="stack"><div class="kicker">Forge heat</div><div class="row" role="group" aria-label="Forge heat">${heats}</div>
         <ul class="heat-list">${picked.effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
       <label class="field seed">Seed (optional, for a repeatable route)
@@ -430,9 +538,25 @@ function nodeButton(n: MapNode, build: CompiledBuild, run: RunState, p: { x: num
   const info = routeInfo(n.type, build, run)
   const state = n.state === 'open' ? 'Available' : n.state === 'done' ? '✓ Cleared' : n.state === 'active' ? '● Here' : n.state === 'missed' ? '✕ Passed by' : 'Later'
   const detail = n.state === 'open' ? `<span class="small">Risk: ${esc(info.risk)}</span><span class="small">Reward: ${esc(info.reward)}</span>` : ''
-  return `<button class="btn node ${n.state}" style="left:${p.x}px;top:${p.y}px;width:${NODE_W}px;height:${NODE_H}px" data-act="enter" data-arg="${n.id}" ${n.state === 'open' ? '' : 'disabled'} title="${esc(info.advice)}" aria-label="${esc(`${info.label}. ${state}. ${n.state === 'open' ? `Risk: ${info.risk} Reward: ${info.reward} ${info.advice}` : ''}`)}">
-    <b>${esc(info.label)}</b> <span class="state">${state}</span>${detail}
+  const here = run.currentId === n.id && (n.state === 'done' || n.state === 'active')
+  return `<button class="btn node ${n.state} type-${n.type}${here ? ' here' : ''}" style="left:${p.x}px;top:${p.y}px;width:${NODE_W}px;height:${NODE_H}px;--d:${n.depth}" data-act="enter" data-arg="${n.id}" ${n.state === 'open' ? '' : 'disabled'} title="${esc(info.advice)}" aria-label="${esc(`${info.label}. ${state}. ${n.state === 'open' ? `Risk: ${info.risk} Reward: ${info.reward} ${info.advice}` : ''}`)}">
+    <span class="node-head"><span class="glyph" aria-hidden="true">${nodeGlyph(n.type)}</span><b>${esc(info.label)}</b></span> <span class="state">${state}</span>${detail}
   </button>`
+}
+
+/** Small line glyphs so a room type reads at a glance, before its label. */
+function nodeGlyph(type: MapNode['type']): string {
+  const paths: Record<string, string> = {
+    combat: '<path d="M12 2.5l2.2 6 6.3.4-4.9 4 1.6 6.1L12 15.6 6.8 19l1.6-6.1-4.9-4 6.3-.4z"/>',
+    elite: '<path d="M3.5 18.5h17l-1.6-10-4.4 3.8L12 4.5l-2.5 7.8-4.4-3.8z"/><path d="M8 15h8"/>',
+    shop: '<path d="M12 3.5l7.5 15h-15z"/><path d="M12 10v4"/>',
+    event: '<path d="M8.8 8.6a3.3 3.3 0 1 1 4.6 3c-.8.4-1.4 1-1.4 1.9v.8"/><circle cx="12" cy="18.3" r=".6"/>',
+    treasure: '<path d="M4 10h16v9H4z"/><path d="M4 10l2-4.5h12L20 10"/><path d="M12 12.5v3"/>',
+    traversal: '<path d="M3 18c3.5-8 10.5-8 14 0"/><path d="M13.5 15l3.5 3 3-3.5"/><circle cx="6" cy="9" r="1.8"/>',
+    challenge: '<path d="M7 3.5h10M7 20.5h10"/><path d="M8 3.5c0 5 8 4.5 8 8.5s-8 3.5-8 8.5M16 3.5c0 5-8 4.5-8 8.5s8 3.5 8 8.5"/>',
+    boss: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="5.8" r="1"/><circle cx="6.8" cy="15" r="1"/><circle cx="17.2" cy="15" r="1"/>',
+  }
+  return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths[type] ?? paths.combat}</svg>`
 }
 
 function rewardHtml(view: View): string {
@@ -469,10 +593,11 @@ function offerCard(o: Offer, i: number, view: View): string {
   }
   const amount = o.kind === 'heal' ? `+${o.amount} integrity` : o.kind === 'cinders' ? `+${o.amount} cinders` : o.kind === 'reroll' ? `+${o.amount} reroll token` : o.kind === 'ember' ? `+${o.amount} ember (kept between runs)` : ''
   const tradeoff = o.kind === 'component' && o.bars?.some((b) => b.next < b.current - 0.02) && o.bars?.some((b) => b.next > b.current + 0.02)
-  return `<article class="card">
+  const art = o.slot ? `slot-${o.slot}` : o.kind === 'cinders' ? 'currency-cinders' : o.kind === 'ember' ? 'currency-embers' : o.kind === 'heal' ? 'core-balanced' : 'slot-passive'
+  return `<article class="card kind-${o.kind}" data-rarity="${o.rarity ?? 'common'}" style="--i:${i}">
+    <div class="card-head">${icon(art, 30)}<div class="rarity ${o.rarity ?? ''}">${o.slot ? SLOT_LABEL[o.slot] : o.kind} ${o.rarity ?? ''}${tradeoff ? ' · trade-off' : ''}</div><span class="card-key" aria-hidden="true">${i + 1}</span></div>
     ${o.kind === 'component' ? `<canvas data-preview="${i}" width="280" height="110" aria-hidden="true"></canvas>` : ''}
-    <div class="rarity ${o.rarity ?? ''}">${o.slot ? SLOT_LABEL[o.slot] : o.kind} ${o.rarity ?? ''}${tradeoff ? ' · trade-off' : ''}</div>
-    <strong>${esc(o.title)}</strong>
+    <strong class="card-title">${esc(o.title)}</strong>
     ${o.kind === 'component' ? `<span class="muted">${o.replaces ? `Replaces ${esc(o.replaces.name)}` : 'Fills an empty slot'}</span>` : ''}
     <span>${esc(o.description)}</span>
     ${amount ? `<span class="amount">${amount}</span>` : ''}
@@ -557,9 +682,9 @@ function summaryHtml(view: View): string {
       ? `<ul class="breakdown">${rows.map(([label, n]) => `<li><span>${esc(label)}</span><span class="bar" aria-hidden="true"><em style="width:${(n / max) * 100}%"></em></span><b>${Math.round(n)}</b></li>`).join('')}</ul>`
       : '<p class="muted">Nothing recorded.</p>'
   }
-  return `<div class="panel stack scroll">
+  return `<div class="panel stack scroll summary ${s.kind}">
     <div class="kicker">${s.kind === 'victory' ? 'The Colossus is scrap' : s.kind === 'abandon' ? 'Run abandoned' : 'The ball breaks'}</div>
-    <h2>${esc(s.title)}</h2>
+    <h2 class="summary-title">${esc(s.title)}</h2>
     ${s.cause ? `<p><b>Cause:</b> ${esc(s.cause)}</p>` : ''}
     <p>${esc(s.tip)}</p>
     <p class="muted foreman">Foreman: “${esc(s.line)}”</p>
@@ -578,7 +703,7 @@ function summaryHtml(view: View): string {
       <section><h3>Damage taken</h3>${bars(s.taken)}</section>
       <section><h3>Damage dealt</h3>${bars(s.dealt)}</section>
     </div>
-    <p>${s.highlights.map(esc).join(' · ')}</p>
+    <ul class="highlights">${s.highlights.map((h, i) => `<li style="--i:${i}">${esc(h)}</li>`).join('')}</ul>
     <p><b>+${s.scrap} scrap.</b> ${currencies(view.save, null)}</p>
     <p class="muted">Seed ${s.seed} · Heat ${s.heat}${s.assist ? ' · assists on' : ''}</p>
   </div>`

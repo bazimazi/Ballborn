@@ -1,3 +1,4 @@
+import { artUrl, loadArt } from './assets'
 import { AudioBus } from './audio'
 import { COMPONENT_MAP } from './data/components'
 import { SYNERGY_MAP } from './data/synergies'
@@ -7,7 +8,8 @@ import { applyEventChoice, rollEvent, type GameEvent } from './events'
 import { Input, type FrameInput, type MenuInput } from './input'
 import { FixedStepper } from './loop'
 import { selfCheckPhysics } from './physics'
-import { CardPreview, drawTitleScene, drawWorld, makeCamera, screenToWorld, updateCamera, type Camera } from './render'
+import { Juice } from './juice'
+import { ballView, CardPreview, drawMenuScene, drawWorld, makeCamera, screenToWorld, updateCamera, viewRect, type Camera } from './render'
 import {
   buildFor,
   createRun,
@@ -59,7 +61,7 @@ import { TUNE } from './tune'
 import type { HitSource, RoomTemplate, Slot } from './types'
 import { SLOTS } from './types'
 import { damageLabel, HIT_LABEL, Hud, presetIds, screenHtml, type RunSummary, type Screen, type View } from './ui'
-import { cosmeticRng, hypot } from './util'
+import { hypot } from './util'
 
 /** Longest catch-up in ticks for one rendered frame (maxFrame at 120 Hz). */
 const MAX_STEPS = Math.ceil(TUNE.maxFrame / TUNE.fixedDt)
@@ -90,18 +92,22 @@ export class Game {
   rebinding: Btn | null = null
   summary: RunSummary | null = null
   cam: Camera = makeCamera()
-  shake = 0
+  readonly juice = new Juice()
   flash = 0
   hitstop = 0
+  /** Room entry iris, 0 closed to 1 open. */
+  iris = 1
+  /** The beat between a room ending and its result screen. */
+  private outro: { kind: 'clear' | 'dead'; t: number; dur: number; sim: Simulation } | null = null
+  private gateWasOpen = false
   saveWarning = ''
   private stepper = new FixedStepper(TUNE.fixedDt, MAX_STEPS)
   private previews: CardPreview[] = []
-  private toasts: { text: string; life: number }[] = []
+  private toasts: { text: string; life: number; kind: string; count: number }[] = []
   private usesAtBoss = 0
   private lab = false
   private abilityWasReady = true
   private hud = new Hud()
-  private noise = cosmeticRng()
   readonly input: Input
   readonly audio = new AudioBus()
   private view: HTMLCanvasElement
@@ -131,6 +137,9 @@ export class Game {
     this.screenEl.addEventListener('input', (e) => this.onInput(e))
     window.addEventListener('keydown', (e) => this.onKey(e))
     window.addEventListener('pointerdown', () => this.audio.resume())
+    this.screenEl.addEventListener('pointermove', (e) => this.tiltCard(e))
+    this.screenEl.addEventListener('pointerout', (e) => this.untiltCard(e))
+    loadArt()
     if (!this.writeSave()) this.saveWarning = 'This browser is not letting Ballborn save. Progress lasts until the tab closes.'
     this.applySettings()
     const errors = selfCheckPhysics()
@@ -156,15 +165,21 @@ export class Game {
     if (this.input.context === 'menu') this.menuNav(this.input.sampleMenu(now))
 
     let alpha = 1
+    const frozen = this.hitstop > 0
     if ((playing || labLive) && this.sim) {
-      if (this.hitstop > 0) {
+      if (this.outro) {
+        alpha = this.stepper.alpha
+        if (playing) this.tickOutro(realDt)
+      } else if (this.hitstop > 0) {
         this.hitstop -= realDt
         alpha = this.stepper.alpha
       } else alpha = this.advance(input, realDt)
+      const stop = this.juice.takeHitstop()
+      if (stop > 0 && this.save.settings.hitPause) this.hitstop = Math.max(this.hitstop, stop)
+      this.iris = Math.min(1, this.iris + realDt / 0.6)
     }
-    this.shake *= Math.exp(-6 * realDt)
     this.flash = Math.max(0, this.flash - realDt * 3)
-    this.render(realDt, now, alpha)
+    this.render(realDt, now, alpha, frozen)
     this.tickToasts(realDt)
     this.input.endFrame()
   }
@@ -176,7 +191,7 @@ export class Game {
     const mouse = input.mouseThrust ? screenToWorld(this.cam, input.mx - rect.left, input.my - rect.top, rect.width, rect.height) : null
     const held = { ...input, hopPressed: false, abilityPressed: false }
     // Pressed edges belong to the first tick only; held input applies to every tick.
-    const steps = this.stepper.advance(realDt, this.save.settings.gameSpeed, TUNE.maxFrame, (first) => {
+    const steps = this.stepper.advance(realDt, this.save.settings.gameSpeed * this.juice.timeScale, TUNE.maxFrame, (first) => {
       sim.step(first ? input : held, mouse)
       return sim.done
     })
@@ -194,26 +209,45 @@ export class Game {
     if (ready && !this.abilityWasReady) this.audio.abilityReady()
     this.abilityWasReady = ready
     this.prompt = this.tutorialPrompt()
-    if (sim.done && !this.lab) this.resolveRoom()
+    if (sim.exitOpen && !this.gateWasOpen && !this.lab && !sim.done) this.onGateOpen(sim)
+    this.gateWasOpen = sim.exitOpen
+    if (sim.done && !this.lab) this.startOutro(sim)
     return this.stepper.alpha
   }
 
-  private render(dt: number, now: number, alpha: number): void {
+  private render(dt: number, now: number, alpha: number, frozen: boolean): void {
     this.resize()
     const w = this.view.clientWidth
     const h = this.view.clientHeight
     const s = this.save.settings
+    const juice = this.juice
+    juice.settings = { shake: s.screenShake, particles: s.particles, motion: s.cameraMotion, hitPause: s.hitPause }
     const inWorld = !!this.sim && (this.screen === 'play' || this.screen === 'pause' || this.lab)
     if (inWorld && this.sim) {
       const moving = this.screen !== 'pause' && !this.buildOpen && !this.labPaused
-      if (moving) updateCamera(this.cam, this.sim, dt, this.shake * s.screenShake, w, h, s.cameraMotion, alpha, this.noise)
+      if (moving) {
+        updateCamera(this.cam, this.sim, dt, w, h, s.cameraMotion, alpha)
+        const b = ballView(this.sim, alpha)
+        juice.update(dt, this.sim, viewRect(this.cam, w, h), frozen, b.x, b.y)
+        const off = juice.shakeOffset()
+        this.cam.shakeX = off.x
+        this.cam.shakeY = off.y
+        this.cam.rot = off.rot
+      }
       this.sim.fxLevel = s.particles
-      drawWorld(this.ctx, this.sim, this.cam, w, h, { alpha, particles: s.particles, colorblind: s.colorblind, contrast: s.highContrast, flash: s.flashes ? this.flash : 0 })
+      const outro = this.outro ? { kind: this.outro.kind, t: this.outro.t / this.outro.dur } : null
+      drawWorld(this.ctx, this.sim, this.cam, w, h, {
+        alpha, particles: s.particles, colorblind: s.colorblind, contrast: s.highContrast, flash: s.flashes ? this.flash : 0,
+        motion: s.cameraMotion, juice, time: now / 1000, iris: s.cameraMotion ? this.iris : 1, outro,
+      })
     } else {
-      drawTitleScene(this.ctx, w, h, now / 1000, !s.cameraMotion)
+      juice.update(dt, null, { x: 0, y: 0, w, h }, false, 0, 0)
+      drawMenuScene(this.ctx, w, h, now / 1000, !s.cameraMotion, this.screen === 'title' ? 'title' : 'menu', juice)
     }
+    if (juice.armedEdge) this.audio.armed()
     const hudSim = inWorld ? this.sim : null
-    this.hud.update(hudSim, this.run, hudSim ? (this.run && !this.lab ? currentBuild(this.run) : hudSim.build) : null, this.save, this.prompt, this.buildOpen)
+    this.hud.update(hudSim, this.run, hudSim ? (this.run && !this.lab ? currentBuild(this.run) : hudSim.build) : null, this.save, this.prompt, this.buildOpen, dt)
+    if (juice.arrivals) this.hud.bumpCinders()
     this.stepPreviews(dt)
     const sim = this.sim
     this.audio.setState(this.screen === 'play' && !this.buildOpen ? (sim?.room.type === 'boss' ? 'boss' : 'play') : this.screen === 'pause' ? 'paused' : this.lab && !this.labPaused ? 'play' : 'menu')
@@ -586,6 +620,12 @@ export class Game {
     this.abilityWasReady = true
     this.cam.x = template.player.x
     this.cam.y = template.player.y
+    this.outro = null
+    this.iris = 0
+    this.hitstop = 0
+    this.gateWasOpen = this.sim.exitOpen
+    if (template.type === 'boss') this.hud.banner('Iron Colossus', 'Crack the rivets. Then the heart.', 'boss', artUrl('colossus'))
+    else this.hud.banner(template.name, template.objective, 'room')
     this.screen = 'play'
     this.say(`${template.name}. ${template.objective}`)
     this.refresh()
@@ -593,13 +633,12 @@ export class Game {
 
   private listeners(): SimListeners {
     return {
+      onFx: (e) => this.juice.onEvent(e),
       onDiscovery: (id) => this.onDiscovery(id),
       onToast: (text) => {
         if (text) this.toast(text)
       },
-      onShake: (mag) => {
-        this.shake = Math.min(16, this.shake + mag)
-      },
+      onShake: (mag) => this.juice.addTrauma(mag / 30),
       onFlash: (s) => {
         this.flash = Math.max(this.flash, s)
       },
@@ -612,7 +651,8 @@ export class Game {
       onHurt: (source) => this.audio.hurt(source),
       onBossPhase: (phase) => {
         this.audio.bossPhase(phase)
-        this.flash = Math.max(this.flash, 0.3)
+        this.flash = Math.max(this.flash, 0.25)
+        this.hud.banner(phase === 2 ? 'The heart is open' : 'The floor is failing', phase === 2 ? 'Ram the molten core.' : 'Get off the middle floor.', 'phase')
         this.say(phase === 2 ? 'Colossus phase two. The heart is open.' : 'Colossus phase three. The middle floor is about to collapse.')
       },
       onAbility: (kind) => {
@@ -626,6 +666,7 @@ export class Game {
         this.grant(bumpAchievement(this.save, 'combo-forge', n, 'max'))
       },
       onKill: (record) => {
+        this.audio.kill(this.sim?.combo ?? 0)
         if (!this.run || this.lab) return
         this.run.kills++
         if (record.source === 'collision') this.grant(bumpAchievement(this.save, 'first-blood', 1, 'set'))
@@ -648,6 +689,61 @@ export class Game {
         this.grant(bumpAchievement(this.save, 'heavy-hand', dealt, 'max'))
       },
     }
+  }
+
+  /** The room is done: hold on the result for a beat before the next screen. */
+  private startOutro(sim: Simulation): void {
+    if (this.outro) return
+    const dead = sim.ended === 'dead'
+    this.outro = { kind: dead ? 'dead' : 'clear', t: 0, dur: dead ? 1.4 : 0.45, sim }
+    this.hitstop = 0
+    if (dead) {
+      this.audio.shatter()
+      this.flash = Math.max(this.flash, 0.25)
+    } else this.audio.clear()
+  }
+
+  private tickOutro(dt: number): void {
+    const o = this.outro
+    if (!o) return
+    if (o.sim !== this.sim) {
+      this.outro = null
+      return
+    }
+    // The first moments of a death run slower, so the break reads.
+    o.t += o.kind === 'dead' && o.t < 0.5 ? dt * 0.6 : dt
+    if (o.t < o.dur) return
+    this.outro = null
+    this.resolveRoom()
+  }
+
+  /** The last construct fell: a short slow-motion beat and a banner. */
+  private onGateOpen(sim: Simulation): void {
+    if (sim.room.type !== 'boss') this.juice.slowMo(0.5, 0.35)
+    this.audio.clear()
+    this.hud.banner('Gate open', sim.room.type === 'boss' ? 'The Colossus is scrap. Roll out.' : 'Roll into the frame.', 'clear')
+    this.flash = Math.max(this.flash, 0.12)
+  }
+
+  /** Reward cards lean toward the pointer. */
+  private tiltCard(e: PointerEvent): void {
+    if (!this.save.settings.cameraMotion) return
+    const card = (e.target as HTMLElement).closest<HTMLElement>('.card')
+    if (!card) return
+    const r = card.getBoundingClientRect()
+    const x = (e.clientX - r.left) / r.width - 0.5
+    const y = (e.clientY - r.top) / r.height - 0.5
+    card.style.setProperty('--ry', `${(x * 12).toFixed(2)}deg`)
+    card.style.setProperty('--rx', `${(-y * 10).toFixed(2)}deg`)
+    card.style.setProperty('--mx', `${((x + 0.5) * 100).toFixed(1)}%`)
+    card.style.setProperty('--my', `${((y + 0.5) * 100).toFixed(1)}%`)
+  }
+
+  private untiltCard(e: PointerEvent): void {
+    const card = (e.target as HTMLElement).closest<HTMLElement>('.card')
+    if (!card || (e.relatedTarget instanceof Node && card.contains(e.relatedTarget))) return
+    card.style.removeProperty('--ry')
+    card.style.removeProperty('--rx')
   }
 
   /** The one place a finished room turns into run state. */
@@ -913,7 +1009,8 @@ export class Game {
   }
 
   private grant(grants: { text: string }[]): void {
-    for (const g of grants) this.toast(g.text)
+    // One achievement is one toast: its rewards ride along.
+    if (grants.length) this.toast(grants.map((g) => g.text).join(' · '))
     if (grants.length) this.persist()
   }
 
@@ -985,8 +1082,14 @@ export class Game {
   // DOM.
 
   private toast(text: string): void {
-    this.toasts.push({ text, life: 3.2 })
-    if (this.toasts.length > 4) this.toasts.shift()
+    const same = this.toasts.find((t) => t.text === text)
+    if (same) {
+      same.count++
+      same.life = 3.2
+    } else {
+      this.toasts.push({ text, life: 3.2, kind: toastKind(text), count: 1 })
+      if (this.toasts.length > 4) this.toasts.shift()
+    }
     this.renderToasts()
   }
 
@@ -1007,10 +1110,15 @@ export class Game {
 
   private renderToasts(): void {
     const root = document.getElementById('toasts')!
+    const existing = new Map<string, HTMLElement>()
+    for (const el of Array.from(root.children) as HTMLElement[]) existing.set(el.dataset.key ?? '', el)
+    // Reuse live nodes so a toast does not replay its entrance on every change.
     root.replaceChildren(...this.toasts.map((t) => {
-      const div = document.createElement('div')
-      div.className = 'toast'
-      div.textContent = t.text
+      const key = `${t.text}#${t.count}`
+      const div = existing.get(key) ?? document.createElement('div')
+      div.className = `toast ${t.kind}`
+      div.dataset.key = key
+      div.textContent = t.count > 1 ? `${t.text}  ×${t.count}` : t.text
       return div
     }))
   }
@@ -1061,7 +1169,9 @@ export class Game {
     const active = document.activeElement as HTMLElement | null
     const focusKey = active && this.screenEl.contains(active) ? focusKeyOf(active) : null
     const scrollers = Array.from(this.screenEl.querySelectorAll<HTMLElement>('.scroll, .map-scroll')).map((el) => el.scrollTop)
-    this.screenEl.className = this.screen
+    const entering = this.screenEl.dataset.screen !== this.screen
+    this.screenEl.dataset.screen = this.screen
+    this.screenEl.className = entering ? `${this.screen} enter` : this.screen
     this.screenEl.innerHTML = screenHtml(view)
     this.screenEl.querySelectorAll<HTMLElement>('.scroll, .map-scroll').forEach((el, i) => {
       if (scrollers[i] !== undefined) el.scrollTop = scrollers[i]!
@@ -1096,6 +1206,16 @@ function focusKeyOf(el: HTMLElement): string | null {
   if (d.slot) return `[data-slot="${d.slot}"]`
   if (d.seed !== undefined) return '[data-seed]'
   return null
+}
+
+function toastKind(text: string): string {
+  if (text.startsWith('Achievement')) return 'gold'
+  if (text.startsWith('Discovery')) return 'epic'
+  if (/^\+\d+ cinders/.test(text) || /cinders collected/.test(text)) return 'cinder'
+  if (/scrap/.test(text)) return 'scrap'
+  if (/ember/.test(text)) return 'ember'
+  if (/fitted|forged|Welded/.test(text)) return 'part'
+  return 'info'
 }
 
 function isTyping(): boolean {

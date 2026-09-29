@@ -171,6 +171,28 @@ Near-duplicates to revisit (not changed yet): Momentum Engine and Momentum Harve
 | Electromagnetic Heart | core | legendary (fusion) | projectiles: attract | You are the lightning rod. Miss the catch and the room aims at you. | Arc Tether, Storm Bounce | arcs reach rivets and heart (x0.8) |
 | Pinball Heart | shell | legendary (fusion) | projectiles: reflect-fast | Thin integrity and almost no grip. The floor is not your friend. | Storm Bounce, Critical Momentum, Bulwark Rhythm | bonus counts as ram damage |
 
+## Game feel
+
+Everything here is cosmetic. The simulation reports what happened through `FxEvent`s (`src/sim.ts`), and `src/juice.ts` turns them into effects with its own random stream. Nothing in it is read back by gameplay, so seeded replays stay exact.
+
+| Moment | What the player sees | Numbers |
+| --- | --- | --- |
+| Any ram | Impact star, sparks thrown along the ram, camera kick along the ram, ball squash along the contact normal | Kick 3-10 px; squash 0.16-0.30 on an under-damped spring |
+| Clean ram | Shockwave ring, small zoom punch | Zoom punch up to +8% |
+| Break | Tumbling shards that bounce and settle, smoke, a scorch left on the floor for 14 s | Hit pause 65 ms (elite 110 ms) |
+| Heavy ram (over 60 damage) | Longer hit pause | 60-100 ms |
+| Last construct | Slow motion, "Gate open" banner, chord | 0.5 s at 35% speed |
+| Colossus phase / rivet | Big ring, debris, banner | Hit pause 160 ms / 90 ms |
+| Colossus down | Chain of explosions, slow motion | 1.5 s at 30% speed |
+| Ball breaks | Ball shatters, 1.4 s beat with "SHELL FAILED" before the summary | The first 0.5 s runs at 60% |
+| Clean-ram speed reached | Green pulse ring, rising chirp, glow and hot trail while it lasts | Arms at 55% of top speed, disarms under 49% |
+
+Camera shake uses trauma (0-1, decays 1.25 per second). Shake is trauma squared times 16 px, plus a roll of up to 0.03 rad. Screen flashes are capped at 28% opacity.
+
+The settings still apply to all of it. **Screen shake** scales trauma and kick. **Particles** scales every spawn count. **Hit pause** also turns off slow motion. **Camera zoom and look-ahead** turns off zoom punch, squash, speed lines, the room iris, card tilt, and CSS motion. Telegraphs, rings, and hazard warnings draw at every setting.
+
+The painted art in `public/art/foundry-v1/images/` ships as WebP (about 250 KB in total, down from 6 MB of PNG). It is used as the title backdrop, a far parallax layer in rooms, and the Colossus intro portrait. If an image fails to load, the procedural scene is drawn instead.
+
 ## Open tuning questions for playtests
 
 - Is 55% of top speed the right clean-ram threshold for light builds on short rooms?

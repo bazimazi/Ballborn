@@ -1,4 +1,4 @@
-Ballborn Foundry v1 — image generation prompts
+Ballborn Foundry v1 - image generation prompts
 
 Generated on 2026-09-28 using the built-in image-generation tool. No external reference images were supplied. Original outputs were copied unchanged into `public/art/foundry-v1/images/`. Icons were authored as SVG, not generated as raster images. These are the exact prompts used; actual deliverable dimensions and intended uses are recorded in `manifest.json`.
 

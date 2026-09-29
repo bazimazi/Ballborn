@@ -2,7 +2,7 @@
 
 Build a ball. Feel the build physically. Master it. Break it. Rebuild it.
 
-Ballborn is a side-view action roguelite. You roll a ball through the Foundry, and the ball *is* the build. Six parts change how it actually moves, collides, and hits — mass, acceleration, top speed, hop, bounce, friction, and impact — rather than adding a flat damage bonus.
+Ballborn is a side-view action roguelite. You roll a ball through the Foundry, and the ball *is* the build. Six parts change how it actually moves, collides, and hits - mass, acceleration, top speed, hop, bounce, friction, and impact - rather than adding a flat damage bonus.
 
 This repository is the Foundry vertical slice: one biome, a short tutorial, a branching run, the Iron Colossus, and a Ball Lab for trying parts with no stakes.
 
@@ -37,7 +37,7 @@ Open [http://127.0.0.1:5173/](http://127.0.0.1:5173/).
 | Build sheet (pauses) | Tab | Back |
 | Pause | Esc | Start |
 | Menus | Tab / Shift+Tab, Enter or Space, Esc to go back | D-pad or stick to move focus, A to confirm, B to go back |
-| Reward cards | 1, 2, 3 | — |
+| Reward cards | 1, 2, 3 | - |
 
 Holding the left mouse button on the game view steers toward the pointer when no key is held. Clicking menus never steers the ball. The game pauses when the window loses focus or a controller disconnects.
 
@@ -68,9 +68,9 @@ Rooms are short. Clear the room, take a reward, then pick the next route. Routes
 
 Currencies:
 
-- **Cinders** ▲ — spent during the run (shop). Every cinder a construct drops is collected when the gate opens.
-- **Scrap** ■ — kept between runs; forges new parts in the codex.
-- **Embers** ◆ — kept between runs; spent at the Annealing (evolutions) and the Crucible (fusions). Earned from elites, treasure, shops, and achievements.
+- **Cinders** ▲ - spent during the run (shop). Every cinder a construct drops is collected when the gate opens.
+- **Scrap** ■ - kept between runs; forges new parts in the codex.
+- **Embers** ◆ - kept between runs; spent at the Annealing (evolutions) and the Crucible (fusions). Earned from elites, treasure, shops, and achievements.
 
 Forge Heat 0–3 unlocks by winning. The title screen lists exactly what the selected heat changes.
 

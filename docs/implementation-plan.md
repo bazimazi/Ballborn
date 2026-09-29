@@ -4,7 +4,7 @@ Working plan for the brief in `ai-improvement-prompt.md`, kept up to date with w
 
 Labels: **Defect** (confirmed wrong behaviour, reproduced before fixing), **Hypothesis** (design change expected to help, needs playtests), **Tuning** (a number or rule chosen deliberately), **Deferred** (not done; see the end).
 
-## Phase 1: correctness and the player's run — done
+## Phase 1: correctness and the player's run - done
 
 | # | Player problem | Evidence | Change | Modules | Verification | Status |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -21,7 +21,7 @@ Labels: **Defect** (confirmed wrong behaviour, reproduced before fixing), **Hypo
 
 Related contract audit, all fixed: `onDamaged` now dispatched; `pickup` attraction implemented; ice has low grip; Wildfire's spread implemented; Flaming Shell's "panic" removed; knockback action pushed toward the ball (**defect found during work**); conveyors could not move a resting ball (**defect found during work**); abandon paid 2 scrap instantly and repeatably (exploit, removed); a bought ember could be duplicated by reloading (prevented by checkpointing transactions together with the save).
 
-## Phase 2: movement, combat, simulation — done
+## Phase 2: movement, combat, simulation - done
 
 - Fixed 120 Hz step with a bounded accumulator and ball interpolation (`loop.ts`). Pressed actions are latched until a tick consumes them.
 - Separate route, room-combat, and cosmetic random streams; run stream serializable.
@@ -33,14 +33,14 @@ Related contract audit, all fixed: `onDamaged` now dispatched; `pickup` attracti
 - Effect recursion capped at depth 3; kills and rewards are exactly-once through the `alive` guard.
 - Representative builds measured (`docs/design-and-tuning.md`).
 
-## Phase 3: rooms, enemies, boss — mostly done
+## Phase 3: rooms, enemies, boss - mostly done
 
 - Content validator for IDs, references, finite geometry, spawn support, exits, requirements, fusions, achievements (`content.ts`), with a negative test.
 - Rooms revised: Swarm Loft (ricochet arena), Moving Yard (hazard timing and recovery), Turret Walk (reflection guidance), Colossus Hold (slag seam). Slag now spits the ball out (**Hypothesis**: better recovery; matches the biome description).
 - Colossus: one target list for all effects plus explicit boss rules; objectives per phase; stamp, barrage, and collapse telegraphs; a vulnerable window after a stamp; every representative build damages it.
 - Not done: authoring new encounters beyond these four rooms; manual reachability review of every room with every build (only automated checks); enemy silhouettes beyond small markers.
 
-## Phase 4: builds, routes, progression — mostly done
+## Phase 4: builds, routes, progression - mostly done
 
 - Component audit matrix and fixes (`docs/design-and-tuning.md`).
 - Reward cards: replaced part, integrity change, reactions gained and broken, bars with direction arrows, optional numbers table, a trade-off label, and **Keep the ball** salvage.
@@ -52,7 +52,7 @@ Related contract audit, all fixed: `onDamaged` now dispatched; `pickup` attracti
 - Save and resume at safe points, with the random stream.
 - Not done: a full economy simulation over many runs; revising near-duplicate parts.
 
-## Phase 5: onboarding, interface, controls, accessibility — mostly done
+## Phase 5: onboarding, interface, controls, accessibility - mostly done
 
 - Tutorial prompts follow the player's bindings and explain the weak bump versus the clean ram and the speed ring; Heavy versus Light choice unchanged.
 - Separate gameplay and menu input contexts; Tab, Enter, Space, and Esc work in menus; full controller focus, confirm, back, sliders, and selects; radial deadzone; reconnect notices; binding conflicts swap; Esc cancels; reset to default; pointer thrust only on the game view with capture; pause on focus loss or hidden tab; stale input cleared on resume.
@@ -61,14 +61,14 @@ Related contract audit, all fixed: `onDamaged` now dispatched; `pickup` attracti
 - Independent settings for shake, particles, camera motion, flashes, hit pause, contrast (world too), shape markers, interface size, audio, game speed, and a damage assist; defaults follow reduced-motion.
 - Not done: a longer playable tutorial step that compares heavy and light side by side in the same room; physical controller testing.
 
-## Phase 6: art direction, sound, character — partly done
+## Phase 6: art direction, sound, character - partly done
 
 - Visual cues for clean rams, armor, shields, elites, burns, lightning resistance, wind-ups, phase states, rivets, shields on the ball, dash phase, and the clean-ram notch.
 - Audio: voice budget with priorities (warnings always play), gain ramps, menu, play, boss, and paused music states, rolling sound per shell material, distinct clean, glance, block, reflect, ability-ready, purchase, discovery, and boss-phase sounds, a low-integrity heartbeat; audio unlocks from keys and pointer; failure is silent and safe.
 - Foreman lines on run summaries.
 - Not done: per-slot visual layering beyond the existing merge; room dressing; an actual listening pass (none was possible in this environment).
 
-## Phase 7: performance, maintainability, release — done for this scope
+## Phase 7: performance, maintainability, release - done for this scope
 
 - Builds cached by loadout; HUD writes only changed values; dead entities removed; lab respawns limited to original spawns and lab loot fades (**defect found by the soak**: splitter shards respawned without limit).
 - Transactions, events, damage rules, the fixed stepper, and validation live in their own modules.

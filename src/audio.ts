@@ -179,6 +179,42 @@ export class AudioBus {
     else this.tone(180, t, 0.12, 'sawtooth', 0.06, d, P_HIT)
   }
 
+  /** The ball just reached clean-ram speed: a short rising chirp. */
+  armed(): void {
+    if (!this.ctx || !this.sfxGain) return
+    const t = this.ctx.currentTime
+    this.tone(660, t, 0.05, 'triangle', 0.035, this.sfxGain, P_LOW)
+    this.tone(990, t + 0.04, 0.07, 'triangle', 0.03, this.sfxGain, P_LOW)
+  }
+
+  /** A construct breaks. Each link of a combo rings a step higher. */
+  kill(combo: number): void {
+    if (!this.ctx || !this.sfxGain) return
+    const t = this.ctx.currentTime
+    this.noiseBurst(t, 0.14, 420, 0.14, this.sfxGain, P_HIT)
+    this.tone(55, t, 0.18, 'sine', 0.16, this.sfxGain, P_HIT)
+    const scale = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26, 28, 31, 33]
+    const step = scale[Math.min(scale.length - 1, Math.max(0, combo - 1))]!
+    this.tone(392 * Math.pow(2, step / 12), t + 0.02, 0.14, 'triangle', 0.05, this.sfxGain, P_LOW)
+  }
+
+  /** The gate opened, or the ball went through it. */
+  clear(): void {
+    if (!this.ctx || !this.sfxGain) return
+    const t = this.ctx.currentTime
+    for (let i = 0; i < 3; i++) this.tone([392, 523, 659][i]!, t + i * 0.06, 0.22, 'triangle', 0.05, this.sfxGain, P_LOW)
+  }
+
+  /** The ball breaks apart. */
+  shatter(): void {
+    if (!this.ctx || !this.sfxGain) return
+    const t = this.ctx.currentTime
+    this.noiseBurst(t, 0.5, 1600, 0.2, this.sfxGain, P_WARN)
+    this.noiseBurst(t, 0.35, 300, 0.2, this.sfxGain, P_WARN)
+    this.tone(110, t, 0.5, 'sawtooth', 0.08, this.sfxGain, P_WARN)
+    this.tone(55, t + 0.1, 0.7, 'sine', 0.14, this.sfxGain, P_WARN)
+  }
+
   abilityReady(): void {
     if (!this.ctx || !this.sfxGain) return
     this.tone(990, this.ctx.currentTime, 0.05, 'sine', 0.03, this.sfxGain, P_LOW)
