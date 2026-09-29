@@ -43,6 +43,8 @@ type PadState = { hop: boolean; ability: boolean; pause: boolean; build: boolean
 
 const EMPTY_PAD: PadState = { hop: false, ability: false, pause: false, build: false, up: false, down: false, left: false, right: false, a: false, b: false }
 
+export type TouchAction = 'hop' | 'ability' | 'pause' | 'build'
+
 /**
  * Keyboard, mouse, and gamepad sampling with two contexts. In 'play', held
  * keys steer and pressed actions are latched until a simulation tick consumes
@@ -68,6 +70,12 @@ export class Input {
   onRebound: ((btn: Btn, code: string | null) => void) | null = null
   onFocusLost: (() => void) | null = null
   onPadChange: ((connected: boolean) => void) | null = null
+  /** On-screen controls: an analog stick and a held hop button. */
+  touch = { x: 0, y: 0, hop: false }
+  private touchEdges = new Set<TouchAction>()
+  /** True while the player is on a touch screen; the last input device decides. */
+  touchMode = false
+  onTouchMode: ((on: boolean) => void) | null = null
   /** Keys the browser should not act on during play (scrolling, focus moves). */
   private static PLAY_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab']
 
@@ -79,6 +87,7 @@ export class Input {
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.loseFocus()
     })
+    window.addEventListener('pointerdown', (e) => this.setTouchMode(e.pointerType === 'touch'), true)
     window.addEventListener('mousemove', (e) => {
       this.mx = e.clientX
       this.my = e.clientY
@@ -87,6 +96,8 @@ export class Input {
       canvas.addEventListener('pointerdown', (e) => {
         this.mx = e.clientX
         this.my = e.clientY
+        // Fingers steer with the on-screen stick; only a mouse or pen steers toward the pointer.
+        if (e.pointerType === 'touch') return
         if (e.button === 0) {
           this.mouseLeft = true
           try {
@@ -134,6 +145,7 @@ export class Input {
     }
     if (this.context === 'play' && Input.PLAY_KEYS.includes(e.code)) e.preventDefault()
     if (e.repeat) return
+    this.setTouchMode(false)
     if (!this.keys.has(e.code)) {
       this.edges.add(e.code)
       if (this.context === 'play') {
@@ -164,6 +176,32 @@ export class Input {
     this.edges.clear()
     this.latched = { hop: false, ability: false }
     this.mouseLeft = false
+    this.touch = { x: 0, y: 0, hop: false }
+    this.touchEdges.clear()
+  }
+
+  setTouchMode(on: boolean): void {
+    if (this.touchMode === on) return
+    this.touchMode = on
+    this.onTouchMode?.(on)
+  }
+
+  /** A touch button went down or up. Pause and build act on press only. */
+  touchButton(action: TouchAction, down: boolean): void {
+    if (action === 'hop') {
+      if (down && !this.touch.hop && this.context === 'play') this.latched.hop = true
+      this.touch.hop = down
+    } else if (down) {
+      if (action === 'ability') {
+        if (this.context === 'play') this.latched.ability = true
+      } else this.touchEdges.add(action)
+    }
+  }
+
+  /** The on-screen stick, each axis in -1..1 with the deadzone already applied. */
+  touchStick(x: number, y: number): void {
+    this.touch.x = x
+    this.touch.y = y
   }
 
   private loseFocus(): void {
@@ -179,21 +217,25 @@ export class Input {
 
   sample(): FrameInput {
     this.pollPad()
+    const t = this.touch
     const left = this.held('left') || this.stick.x < -0.3 || this.pad.left
     const right = this.held('right') || this.stick.x > 0.3 || this.pad.right
-    const up = this.held('up') || this.pad.hop
-    const down = this.held('down') || this.stick.y > 0.55 || this.pad.down
+    const up = this.held('up') || this.pad.hop || t.hop
+    const down = this.held('down') || this.stick.y > 0.55 || this.pad.down || t.y > 0.6
+    // Pushing the touch stick up aims abilities upward without hopping.
+    const aimUp = t.y < -0.6
     let x = (right ? 1 : 0) - (left ? 1 : 0)
-    // Analog steering wins when the stick is the only input.
-    if (this.stick.x !== 0 && (x === 0 || Math.sign(this.stick.x) === x) && !this.held('left') && !this.held('right')) x = this.stick.x
+    // Analog steering wins when a stick is the only input.
+    const analog = t.x !== 0 ? t.x : this.stick.x
+    if (analog !== 0 && (x === 0 || Math.sign(analog) === x) && !this.held('left') && !this.held('right')) x = analog
     return {
       x,
-      y: (down ? 1 : 0) - (up ? 1 : 0),
+      y: (down ? 1 : 0) - (up || aimUp ? 1 : 0),
       hopHeld: up,
       hopPressed: this.latched.hop,
       abilityPressed: this.latched.ability,
-      pausePressed: this.pressed('pause') || (this.pad.pause && !this.padPrev.pause),
-      buildPressed: this.pressed('build') || (this.pad.build && !this.padPrev.build),
+      pausePressed: this.pressed('pause') || (this.pad.pause && !this.padPrev.pause) || this.touchEdges.has('pause'),
+      buildPressed: this.pressed('build') || (this.pad.build && !this.padPrev.build) || this.touchEdges.has('build'),
       confirmPressed: this.edges.has('Enter'),
       mx: this.mx,
       my: this.my,
@@ -231,6 +273,7 @@ export class Input {
 
   endFrame(): void {
     this.edges.clear()
+    this.touchEdges.clear()
     this.padPrev = { ...this.pad }
   }
 

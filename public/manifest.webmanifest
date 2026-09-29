@@ -1,0 +1,14 @@
+{
+  "name": "Ballborn",
+  "short_name": "Ballborn",
+  "description": "A side-view action roguelite where the ball is the build.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#100e0c",
+  "theme_color": "#100e0c",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

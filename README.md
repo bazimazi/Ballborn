@@ -39,6 +39,8 @@ Open [http://127.0.0.1:5173/](http://127.0.0.1:5173/).
 | Menus | Tab / Shift+Tab, Enter or Space, Esc to go back | D-pad or stick to move focus, A to confirm, B to go back |
 | Reward cards | 1, 2, 3 | - |
 
+On a touch screen the game shows on-screen controls: drag anywhere on the lower left to roll (push down to drop, up to aim an ability upward), tap the big arrow to hop and hold it to float, and tap the ability dial above it. The wrench and pause buttons at the top right open the build sheet and pause; they work with a mouse too. The device used last decides which controls and hints show. Phones play best in landscape; the title screen offers full screen where the browser allows it, and the game can be added to the home screen.
+
 Holding the left mouse button on the game view steers toward the pointer when no key is held. Clicking menus never steers the ball. The game pauses when the window loses focus or a controller disconnects.
 
 Rebinding a key that is already in use swaps the two bindings; Esc cancels a rebind; **Reset keys** restores the defaults.

@@ -9,7 +9,7 @@ import { Input, type FrameInput, type MenuInput } from './input'
 import { FixedStepper } from './loop'
 import { selfCheckPhysics } from './physics'
 import { Juice } from './juice'
-import { ballView, CardPreview, drawMenuScene, drawWorld, makeCamera, screenToWorld, updateCamera, viewRect, type Camera } from './render'
+import { ballView, CardPreview, drawMenuScene, drawWorld, fitZoom, makeCamera, screenToWorld, updateCamera, viewRect, type Camera } from './render'
 import {
   buildFor,
   createRun,
@@ -62,6 +62,8 @@ import type { HitSource, RoomTemplate, Slot } from './types'
 import { SLOTS } from './types'
 import { damageLabel, HIT_LABEL, Hud, presetIds, screenHtml, type RunSummary, type Screen, type View } from './ui'
 import { hypot } from './util'
+import { svg, type IconName } from './icons'
+import { attachTouchControls } from './touch'
 
 /** Longest catch-up in ticks for one rendered frame (maxFrame at 120 Hz). */
 const MAX_STEPS = Math.ceil(TUNE.maxFrame / TUNE.fixedDt)
@@ -128,6 +130,12 @@ export class Game {
     this.input = new Input(this.save.settings.bindings, this.view)
     this.input.onRebound = (btn, code) => this.rebound(btn, code)
     this.input.onFocusLost = () => this.onFocusLost()
+    this.input.onTouchMode = (on) => {
+      document.body.classList.toggle('touch', on)
+      if (this.screen !== 'play') this.refresh()
+    }
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>('[data-icon]'))) el.innerHTML = svg(el.dataset.icon as IconName)
+    attachTouchControls(this.input, document.getElementById('hud')!)
     this.input.onPadChange = (connected) => {
       this.toast(connected ? 'Controller connected.' : 'Controller disconnected.')
       if (!connected) this.onFocusLost()
@@ -137,11 +145,14 @@ export class Game {
     this.screenEl.addEventListener('input', (e) => this.onInput(e))
     window.addEventListener('keydown', (e) => this.onKey(e))
     window.addEventListener('pointerdown', () => this.audio.resume())
+    // Some mobile browsers only unlock audio on the end of a touch.
+    window.addEventListener('touchend', () => this.audio.resume(), { passive: true })
     this.screenEl.addEventListener('pointermove', (e) => this.tiltCard(e))
     this.screenEl.addEventListener('pointerout', (e) => this.untiltCard(e))
     loadArt()
     if (!this.writeSave()) this.saveWarning = 'This browser is not letting Ballborn save. Progress lasts until the tab closes.'
     this.applySettings()
+    if (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches) this.input.setTouchMode(true)
     const errors = selfCheckPhysics()
     if (errors.length) this.toast(errors[0] ?? 'Physics check failed')
     this.refresh()
@@ -259,11 +270,16 @@ export class Game {
     if (!this.run?.tutorial || !this.sim) return ''
     const b = this.save.settings.bindings
     const keys = `${b.left.replace('Key', '')} / ${b.right.replace('Key', '')}`
+    const touch = this.input.touchMode
     if (this.run.tutorialStep === 0) {
       if (this.sim.exitOpen) return 'Gate open. Roll into the frame on the right.'
-      if (this.sim.kills === 0 && this.sim.dealt.collision > 0) return 'That was a bump. Back off, build speed, and hit it again: fill the speed ring past the notch for a clean ram.'
-      if (hypot(this.sim.ball.vx, this.sim.ball.vy) < 120) return `${keys} or arrows roll. Space hops. Hold hop in the air to float. ${b.ability.replace('Left', '')} dashes.`
-      return 'Speed is the weapon. The ring around the ball shows your speed. Past the notch, a ram is clean and costs you nothing.'
+      if (this.sim.kills === 0 && this.sim.dealt.collision > 0) return 'Just a bump. Back off, build speed, hit again: past the notch on the ring is a clean ram.'
+      if (hypot(this.sim.ball.vx, this.sim.ball.vy) < 120) {
+        return touch
+          ? 'Drag on the left to roll. Tap the arrow to hop, hold it to float. The dial dashes.'
+          : `${keys} or arrows roll. Space hops. Hold hop in the air to float. ${b.ability.replace('Left', '')} dashes.`
+      }
+      return 'Speed is the weapon. Past the notch on the ring, a ram is clean and costs nothing.'
     }
     if (this.sim.exitOpen) return 'Same gate. Notice how the new core hops, turns, and hits.'
     return 'The floor is safe. The stairs are optional. Feel the difference in how you start, stop, and land.'
@@ -432,6 +448,10 @@ export class Game {
       case 'abandon-confirm': return this.abandon()
       case 'preset': return this.applyPreset(arg)
       case 'lab-resume': return this.toggleLabPause()
+      case 'lab-edit':
+        if (!this.labPaused) this.toggleLabPause()
+        return
+      case 'fullscreen': return this.toggleFullscreen()
     }
   }
 
@@ -544,6 +564,7 @@ export class Game {
     }, this.listeners())
     this.cam.x = 500
     this.cam.y = 420
+    this.cam.zoom = fitZoom(this.view.clientWidth, this.view.clientHeight)
     this.screen = 'lab'
     this.refresh()
   }
@@ -620,6 +641,7 @@ export class Game {
     this.abilityWasReady = true
     this.cam.x = template.player.x
     this.cam.y = template.player.y
+    this.cam.zoom = fitZoom(this.view.clientWidth, this.view.clientHeight)
     this.outro = null
     this.iris = 0
     this.hitstop = 0
@@ -727,7 +749,7 @@ export class Game {
 
   /** Reward cards lean toward the pointer. */
   private tiltCard(e: PointerEvent): void {
-    if (!this.save.settings.cameraMotion) return
+    if (!this.save.settings.cameraMotion || e.pointerType !== 'mouse') return
     const card = (e.target as HTMLElement).closest<HTMLElement>('.card')
     if (!card) return
     const r = card.getBoundingClientRect()
@@ -812,11 +834,11 @@ export class Game {
       taken,
       dealt,
       highlights: [
-        `Best ram ${Math.round(run.bestHit)}`,
-        `Top speed ${Math.round(run.maxSpeed)}`,
-        `Best combo ×${run.bestCombo}`,
-        `${run.kills} constructs`,
-        `${run.roomsCleared} rooms`,
+        { icon: 'impact', value: `${Math.round(run.bestHit)}`, label: 'Best ram' },
+        { icon: 'gauge', value: `${Math.round(run.maxSpeed)}`, label: 'Top speed' },
+        { icon: 'combo', value: `×${run.bestCombo}`, label: 'Best combo' },
+        { icon: 'target', value: `${run.kills}`, label: 'Constructs' },
+        { icon: 'map', value: `${run.roomsCleared}`, label: 'Rooms' },
       ],
       decisions: run.decisions,
       assist: this.save.settings.assistDamage < 1 || this.save.settings.gameSpeed < 1,
@@ -1014,6 +1036,18 @@ export class Game {
     if (grants.length) this.persist()
   }
 
+  /** Full screen, and landscape where the browser allows locking it. */
+  private toggleFullscreen(): void {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined)
+      return
+    }
+    const orientation = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }
+    void document.documentElement.requestFullscreen({ navigationUI: 'hide' })
+      .then(() => orientation.lock?.('landscape'))
+      .catch(() => undefined)
+  }
+
   private goTitle(): void {
     this.lab = false
     this.labPaused = false
@@ -1165,17 +1199,26 @@ export class Game {
       confirmAbandon: this.confirmAbandon,
       saveWarning: this.saveWarning,
       seedText: this.seedText,
+      touch: this.input.touchMode,
+      canFullscreen: !!document.fullscreenEnabled,
     }
     const active = document.activeElement as HTMLElement | null
     const focusKey = active && this.screenEl.contains(active) ? focusKeyOf(active) : null
     const scrollers = Array.from(this.screenEl.querySelectorAll<HTMLElement>('.scroll, .map-scroll')).map((el) => el.scrollTop)
     const entering = this.screenEl.dataset.screen !== this.screen
     this.screenEl.dataset.screen = this.screen
+    document.body.dataset.screen = this.lab && this.labPaused ? 'lab-edit' : this.screen
     this.screenEl.className = entering ? `${this.screen} enter` : this.screen
     this.screenEl.innerHTML = screenHtml(view)
     this.screenEl.querySelectorAll<HTMLElement>('.scroll, .map-scroll').forEach((el, i) => {
       if (scrollers[i] !== undefined) el.scrollTop = scrollers[i]!
     })
+    // A route wider than the screen opens on the rooms you can take next.
+    if (entering && this.screen === 'map') {
+      const scroller = this.screenEl.querySelector<HTMLElement>('.map-scroll')
+      const node = this.screenEl.querySelector<HTMLElement>('.node.open')
+      if (scroller && node && scroller.scrollWidth > scroller.clientWidth) scroller.scrollLeft = Math.max(0, node.offsetLeft - scroller.clientWidth * 0.2)
+    }
     if (this.screen === 'play' || (this.screen === 'lab' && !this.labPaused)) {
       if (active && this.screenEl.contains(active) === false && active !== document.body) active.blur()
       return

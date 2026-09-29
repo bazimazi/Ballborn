@@ -211,7 +211,7 @@ try {
     check('death reaches the summary', await waitScreen(['death']))
     await page.waitForTimeout(300)
     await shot('11-death')
-    check('death summary names the cause', (await page.locator('text=Cause:').count()) > 0)
+    check('death summary names the cause', (await page.locator('.summary .cause').count()) > 0)
   }
 
   // Settings, codex, lab.
@@ -259,6 +259,47 @@ try {
   await page.evaluate(() => window.dispatchEvent(new Event('blur')))
   check('focus loss pauses the room', (await screen()) === 'pause')
 
+  // Touch: a phone-sized context rolls with the on-screen stick and hops with the button.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 844, height: 390 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true })
+    const p = await ctx.newPage()
+    p.on('pageerror', (e) => report.errors.push(String(e)))
+    await p.goto(URL)
+    await p.waitForTimeout(300)
+    check('touch screens get touch controls', await p.evaluate(() => document.body.classList.contains('touch')))
+    await p.tap('[data-act="launch"][data-arg="tutorial"]')
+    await p.waitForTimeout(400)
+    const x0 = await p.evaluate(() => window.ballborn.sim.ball.x)
+    // Drag the stick right with a synthetic touch pointer and hold it.
+    const zone = await p.locator('[data-touch-stick]').boundingBox()
+    const sx = zone.x + 90
+    const sy = zone.y + zone.height - 90
+    await p.evaluate(({ sx, sy }) => {
+      const el = document.querySelector('[data-touch-stick]')
+      const opts = (x) => ({ pointerId: 7, pointerType: 'touch', isPrimary: true, clientX: x, clientY: sy, bubbles: true })
+      el.dispatchEvent(new PointerEvent('pointerdown', opts(sx)))
+      el.dispatchEvent(new PointerEvent('pointermove', opts(sx + 60)))
+    }, { sx, sy })
+    await p.waitForTimeout(1200)
+    const x1 = await p.evaluate(() => window.ballborn.sim.ball.x)
+    check('touch stick rolls the ball', x1 > x0 + 100, `${Math.round(x0)} -> ${Math.round(x1)}`)
+    const hop = await p.evaluate(() => {
+      const el = document.querySelector('.hop-btn')
+      el.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 8, pointerType: 'touch', bubbles: true }))
+      return new Promise((resolve) => setTimeout(() => {
+        const vy = window.ballborn.sim.ball.vy
+        window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 8, pointerType: 'touch', bubbles: true }))
+        resolve(vy)
+      }, 120))
+    })
+    check('touch hop button hops', hop < -50, `vy=${Math.round(hop)}`)
+    await p.evaluate(() => document.querySelector('.hud-btn[data-touch="pause"]').dispatchEvent(new PointerEvent('pointerdown', { pointerId: 9, pointerType: 'touch', bubbles: true })))
+    await p.waitForTimeout(150)
+    check('touch pause button pauses', (await p.evaluate(() => window.ballborn.screen)) === 'pause')
+    await p.screenshot({ path: `${SHOTS}/15-touch-pause.png` })
+    await ctx.close()
+  }
+
   // Layout at the required sizes and zoom levels. Zoom is emulated as a smaller CSS viewport at a higher device scale.
   const sizes = [
     { name: '1280x720', width: 1280, height: 720, scale: 1 },
@@ -266,9 +307,11 @@ try {
     { name: '800x600', width: 800, height: 600, scale: 1 },
     { name: '1280x720@125%', width: 1024, height: 576, scale: 1.25 },
     { name: '1280x720@150%', width: 853, height: 480, scale: 1.5 },
+    { name: 'phone-landscape', width: 844, height: 390, scale: 3, touch: true },
+    { name: 'phone-portrait', width: 390, height: 844, scale: 3, touch: true },
   ]
   for (const size of sizes) {
-    const ctx = await browser.newContext({ viewport: { width: size.width, height: size.height }, deviceScaleFactor: size.scale })
+    const ctx = await browser.newContext({ viewport: { width: size.width, height: size.height }, deviceScaleFactor: size.scale, hasTouch: !!size.touch, isMobile: !!size.touch })
     const p = await ctx.newPage()
     await p.goto(URL)
     await p.waitForTimeout(300)

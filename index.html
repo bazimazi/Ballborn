@@ -2,7 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icon.svg" />
     <meta name="description" content="Ballborn: a side-view action roguelite where the ball is the build." />
     <meta name="theme-color" content="#100e0c" />
     <title>Ballborn</title>
@@ -17,17 +22,21 @@
       <canvas id="view" aria-label="Game view" role="img"></canvas>
       <div id="hud" hidden>
         <header class="hud-top">
-          <div class="meter integrity" id="hp-meter">
-            <div class="meter-label"><span class="meter-name">Integrity <b id="hp-warn" class="warn-tag"></b></span><span id="hp-num" class="meter-num"></span></div>
+          <div class="meter integrity" id="hp-meter" role="group" aria-label="Integrity">
+            <div class="meter-label"><span class="meter-name"><i data-icon="heart"></i><b id="hp-warn" class="warn-tag"></b></span><span id="hp-num" class="meter-num"></span></div>
             <div class="track hp-track"><div id="hp-chip" class="chip"></div><div id="hp-bar"></div><div id="shield-bar"></div></div>
           </div>
           <div class="objective">
             <div id="room-name"></div>
             <div id="room-obj"></div>
           </div>
-          <div class="resources">
-            <span class="cur cinder" id="cinder-chip" title="Cinders: spent during this run"><img src="art/foundry-v1/icons/currency-cinders.svg" alt="" width="22" height="22" /><span id="cinders"></span></span>
-            <span class="cur ember" title="Embers: kept between runs"><img src="art/foundry-v1/icons/currency-embers.svg" alt="" width="22" height="22" /><span id="embers"></span></span>
+          <div class="hud-right">
+            <div class="resources">
+              <span class="cur cinder" id="cinder-chip" title="Cinders: spent during this run"><img src="art/foundry-v1/icons/currency-cinders.svg" alt="" width="22" height="22" /><span id="cinders"></span></span>
+              <span class="cur ember" title="Embers: kept between runs"><img src="art/foundry-v1/icons/currency-embers.svg" alt="" width="22" height="22" /><span id="embers"></span></span>
+            </div>
+            <button class="hud-btn" data-touch="build" tabindex="-1" aria-label="Build sheet" title="Build sheet (Tab)"><i data-icon="wrench"></i><span class="key kbd">Tab</span></button>
+            <button class="hud-btn" data-touch="pause" tabindex="-1" aria-label="Pause" title="Pause (Esc)"><i data-icon="pause"></i><span class="key kbd">Esc</span></button>
           </div>
         </header>
         <div id="boss-bar" class="boss-bar" hidden>
@@ -37,9 +46,11 @@
         <div id="combo" class="combo" hidden aria-hidden="true"><b id="combo-num"></b><span>combo</span><div class="combo-timer"><div id="combo-timer"></div></div></div>
         <div id="banner" class="banner" aria-hidden="true"></div>
         <div id="prompt" class="prompt" hidden></div>
+        <div class="rotate-hint" aria-hidden="true"><i data-icon="rotate"></i></div>
+        <div class="touch-stick" data-touch-stick aria-hidden="true"><div class="stick-base"><div class="stick-knob"></div></div></div>
         <footer class="hud-bottom">
           <div id="ability-readout" class="ability-readout">
-            <div class="dial" id="ability-dial"><img src="art/foundry-v1/icons/slot-ability.svg" alt="" width="26" height="26" /><span id="ability-key" class="key"></span></div>
+            <button class="dial" id="ability-dial" data-touch="ability" tabindex="-1" aria-label="Ability"><img src="art/foundry-v1/icons/slot-ability.svg" alt="" width="26" height="26" /><span id="ability-key" class="key kbd"></span></button>
             <div class="ability-info">
               <div class="ability-head"><span id="ability-name">Ability</span><b id="ability-state"></b></div>
               <div class="track slim energy"><div id="energy-bar"></div></div>
@@ -47,10 +58,10 @@
             </div>
           </div>
           <div class="readouts">
-            <div class="speed-meter" id="speed-meter"><div class="track speed-track"><div id="speed-bar"></div><i class="notch"></i></div><span id="speed-read"></span></div>
+            <div class="speed-meter" id="speed-meter"><i data-icon="gauge"></i><div class="track speed-track"><div id="speed-bar"></div><i class="notch"></i></div><span id="speed-read"></span></div>
             <span id="instability-read"></span>
           </div>
-          <div class="build-chip"><span id="archetype"></span> <span class="small muted">Tab: build sheet</span></div>
+          <button class="hop-btn" data-touch="hop" tabindex="-1" aria-label="Hop"><i data-icon="hop"></i></button>
         </footer>
         <aside id="sheet" class="sheet" hidden></aside>
       </div>

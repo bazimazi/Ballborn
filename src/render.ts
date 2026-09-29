@@ -44,6 +44,11 @@ export function ballView(sim: Simulation, alpha: number): { x: number; y: number
   return { x: lerp(sim.prevX, sim.ball.x, alpha), y: lerp(sim.prevY, sim.ball.y, alpha) }
 }
 
+/** Small screens (phones, split windows) zoom out so a room reads the same as on a desktop. */
+export function fitZoom(viewW: number, viewH: number): number {
+  return clamp(Math.min(viewW / 1100, viewH / 640), 0.5, 1)
+}
+
 export function updateCamera(cam: Camera, sim: Simulation, dt: number, viewW: number, viewH: number, motion: boolean, alpha: number): void {
   const b = ballView(sim, alpha)
   // Look ahead in the direction of travel so a fast ball can see where it will stop or land.
@@ -54,7 +59,7 @@ export function updateCamera(cam: Camera, sim: Simulation, dt: number, viewW: nu
   cam.x += (lookX - cam.x) * k
   cam.y += (lookY - cam.y) * k
   const sp = hypot(sim.ball.vx, sim.ball.vy)
-  const target = motion ? clamp(1.02 - sp / 5200, 0.86, 1.05) : 0.96
+  const target = (motion ? clamp(1.02 - sp / 5200, 0.86, 1.05) : 0.96) * fitZoom(viewW, viewH)
   cam.zoom += (target - cam.zoom) * (1 - Math.exp(-2.4 * dt))
   const halfW = viewW / (2 * cam.zoom)
   const halfH = viewH / (2 * cam.zoom)
