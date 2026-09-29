@@ -26,6 +26,12 @@ export interface Settings {
   /** Damage taken multiplier. An assist, shown on the run summary. */
   assistDamage: number
   bindings: Record<Btn, string>
+  /** Size of the on-screen touch controls. */
+  touchSize: number
+  /** Stick on the right, buttons on the left. */
+  leftHanded: boolean
+  /** Short vibrations on hits, where the device supports them. */
+  haptics: boolean
 }
 
 export interface AchievementState {
@@ -98,6 +104,9 @@ export function defaultSettings(reduced = prefersReducedMotion()): Settings {
     gameSpeed: 1,
     assistDamage: 1,
     bindings: { ...DEFAULT_BINDINGS },
+    touchSize: 1,
+    leftHanded: false,
+    haptics: true,
   }
 }
 
@@ -228,6 +237,9 @@ export function sanitizeSave(raw: unknown): { save: SaveData; migrated: boolean 
     gameSpeed: num(s.gameSpeed, 0.7, 1.15, 1),
     assistDamage: num(s.assistDamage, 0.4, 1, 1),
     bindings,
+    touchSize: num(s.touchSize, 0.8, 1.3, 1),
+    leftHanded: bool(s.leftHanded, false),
+    haptics: bool(s.haptics, true),
   }
   const achievements: SaveData['achievements'] = {}
   const rawAch = isObj(raw.achievements) ? raw.achievements : {}

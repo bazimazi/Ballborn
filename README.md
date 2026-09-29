@@ -25,7 +25,7 @@ Open [http://127.0.0.1:5173/](http://127.0.0.1:5173/).
 | `npm run check` | Typecheck, test, and build |
 | `npm run smoke` | Browser smoke test against `dist/` (needs a local Chrome or Edge; see below) |
 
-**First ignition** teaches the ram and then offers Heavy Core, Light Core, or staying balanced. **Launch run** starts a Foundry route (an optional seed makes the route repeatable). **Continue run** appears when a run was saved at a safe point. **Ball lab** swaps unlocked parts in a sandbox; nothing there touches a run or your save.
+**First ignition** teaches the ram and then offers Heavy Core, Light Core, or staying balanced. **Launch run** starts a Foundry route (an optional seed makes the route repeatable). **Continue run** appears when a run was saved at a safe point. **Ball lab** swaps unlocked parts in a sandbox while the ball keeps rolling: tap a slot in the strip at the top, pick a part, and try it straight away. Presets and a handling readout sit beside the slots. Nothing there touches a run or your save.
 
 ## Controls
 
@@ -39,7 +39,7 @@ Open [http://127.0.0.1:5173/](http://127.0.0.1:5173/).
 | Menus | Tab / Shift+Tab, Enter or Space, Esc to go back | D-pad or stick to move focus, A to confirm, B to go back |
 | Reward cards | 1, 2, 3 | - |
 
-On a touch screen the game shows on-screen controls: drag anywhere on the lower left to roll (push down to drop, up to aim an ability upward), tap the big arrow to hop and hold it to float, and tap the ability dial above it. The wrench and pause buttons at the top right open the build sheet and pause; they work with a mouse too. The device used last decides which controls and hints show. Phones play best in landscape; the title screen offers full screen where the browser allows it, and the game can be added to the home screen.
+On a touch screen the game shows on-screen controls: drag anywhere on the lower left to roll (push down to drop, up to aim an ability upward), tap the big arrow to hop and hold it to float, and tap the ability dial above it. The wrench and pause buttons at the top right open the build sheet and pause; they work with a mouse too. The device used last decides which controls and hints show. Settings has a Touch section for control size, a left-handed layout, and vibration. On the route map, the first tap on a room shows its risk and reward; tap it again or press Go to enter. Phones play best in landscape; the title screen offers full screen where the browser allows it, and the game can be added to the home screen.
 
 Holding the left mouse button on the game view steers toward the pointer when no key is held. Clicking menus never steers the ball. The game pauses when the window loses focus or a controller disconnects.
 

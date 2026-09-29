@@ -89,6 +89,9 @@ export class Game {
   buildOpen = false
   labPaused = false
   confirmAbandon = false
+  confirmErase = false
+  labPanel: View['labPanel'] = null
+  selectedNode: string | null = null
   heatPick = 0
   seedText = ''
   rebinding: Btn | null = null
@@ -430,8 +433,26 @@ export class Game {
         this.persist()
         this.toast('Keys reset to default.')
         return this.refresh()
-      case 'reset-save': return this.resetSave()
-      case 'enter': return this.enter(arg)
+      case 'reset-save':
+        this.confirmErase = true
+        return this.refresh()
+      case 'enter':
+        // On a touch screen the first tap shows what the room is; the second, or Go, enters.
+        if (this.input.touchMode && !el.dataset.go && this.selectedNode !== arg) {
+          this.selectedNode = arg
+          return this.refresh()
+        }
+        return this.enter(arg)
+      case 'explain': return this.toast(arg)
+      case 'set': return this.setChoice(arg)
+      case 'erase-cancel':
+        this.confirmErase = false
+        return this.refresh()
+      case 'erase-confirm': return this.eraseSave()
+      case 'lab-panel':
+        this.labPanel = this.labPanel === arg ? null : (arg as View['labPanel'])
+        return this.refresh()
+      case 'lab-part': return this.fitLabPart(arg)
       case 'offer': return this.pickOffer(Number(arg))
       case 'salvage': return this.salvage()
       case 'reroll': return this.reroll()
@@ -448,9 +469,6 @@ export class Game {
       case 'abandon-confirm': return this.abandon()
       case 'preset': return this.applyPreset(arg)
       case 'lab-resume': return this.toggleLabPause()
-      case 'lab-edit':
-        if (!this.labPaused) this.toggleLabPause()
-        return
       case 'fullscreen': return this.toggleFullscreen()
     }
   }
@@ -466,27 +484,21 @@ export class Game {
 
   private onChange(e: Event): void {
     const t = e.target as HTMLInputElement
-    if (t.dataset.slot && this.lab && this.run && this.sim) {
-      const slot = t.dataset.slot as Slot
-      const id = t.value || null
-      if (id && COMPONENT_MAP[id]?.slot !== slot) return
-      this.run.ids[slot] = id
-      this.sim.syncBuild(currentBuild(this.run))
-      this.refresh()
-      return
-    }
     if (t.dataset.set) {
-      const key = t.dataset.set as 'screenShake' | 'sfx' | 'music' | 'gameSpeed' | 'particles' | 'hudScale' | 'assistDamage'
+      const key = t.dataset.set as 'screenShake' | 'sfx' | 'music' | 'particles'
       const value = Number(t.value)
       if (!Number.isFinite(value)) return
       this.save.settings[key] = value
       const out = this.screenEl.querySelector(`[data-out="${key}"]`)
       if (out) out.textContent = `${Math.round(value * 100)}%`
+      const min = Number(t.min)
+      const max = Number(t.max)
+      t.style.setProperty('--fill', `${(((value - min) / (max - min)) * 100).toFixed(1)}%`)
       this.applySettings()
       this.persist()
     }
     if (t.dataset.flag) {
-      const key = t.dataset.flag as 'highContrast' | 'colorblind' | 'cameraMotion' | 'flashes' | 'hitPause'
+      const key = t.dataset.flag as 'highContrast' | 'colorblind' | 'cameraMotion' | 'flashes' | 'hitPause' | 'leftHanded' | 'haptics'
       this.save.settings[key] = t.checked
       this.applySettings()
       this.persist()
@@ -557,6 +569,7 @@ export class Game {
   private openLab(): void {
     this.lab = true
     this.labPaused = false
+    this.labPanel = null
     this.run = createRun(0, false)
     this.summary = null
     this.sim = new Simulation(ROOM_MAP['grate-crossing']!, currentBuild(this.run), {
@@ -581,6 +594,7 @@ export class Game {
 
   private toMap(): void {
     this.screen = 'map'
+    this.selectedNode = null
     this.sim = null
     this.offers = []
     this.shop = []
@@ -670,9 +684,13 @@ export class Game {
       onImpactSfx: (speed, kind) => this.audio.impact(speed, this.sim?.stats.mass ?? 1, this.sim?.build.visual.material ?? 'metal', kind),
       onBounceSfx: (speed) => this.audio.bounce(speed, this.sim?.build.visual.material ?? 'metal'),
       onReflectSfx: () => this.audio.reflect(),
-      onHurt: (source) => this.audio.hurt(source),
+      onHurt: (source) => {
+        this.audio.hurt(source)
+        if (!this.lab) this.buzz(35)
+      },
       onBossPhase: (phase) => {
         this.audio.bossPhase(phase)
+        this.buzz([60, 40, 90])
         this.flash = Math.max(this.flash, 0.25)
         this.hud.banner(phase === 2 ? 'The heart is open' : 'The floor is failing', phase === 2 ? 'Ram the molten core.' : 'Get off the middle floor.', 'phase')
         this.say(phase === 2 ? 'Colossus phase two. The heart is open.' : 'Colossus phase three. The middle floor is about to collapse.')
@@ -721,6 +739,7 @@ export class Game {
     this.hitstop = 0
     if (dead) {
       this.audio.shatter()
+      this.buzz([90, 50, 160])
       this.flash = Math.max(this.flash, 0.25)
     } else this.audio.clear()
   }
@@ -997,8 +1016,32 @@ export class Game {
     this.refresh()
   }
 
-  private resetSave(): void {
-    if (!confirm('Erase all Ballborn progress and settings on this machine? This cannot be undone.')) return
+  /** A settings choice made with a row of buttons: `key:value`. */
+  private setChoice(arg: string): void {
+    const [key, raw] = arg.split(':')
+    const value = Number(raw)
+    const keys = ['gameSpeed', 'assistDamage', 'hudScale', 'touchSize'] as const
+    const k = keys.find((x) => x === key)
+    if (!k || !Number.isFinite(value)) return
+    this.save.settings[k] = value
+    this.applySettings()
+    this.persist()
+    this.refresh()
+  }
+
+  /** Swap one lab part while the ball keeps rolling. `slot:id`, with an empty id for none. */
+  private fitLabPart(arg: string): void {
+    if (!this.lab || !this.run || !this.sim) return
+    const [slot, id] = arg.split(':') as [Slot, string]
+    if (!SLOTS.includes(slot)) return
+    if (id && COMPONENT_MAP[id]?.slot !== slot) return
+    this.run.ids[slot] = id || null
+    this.sim.syncBuild(currentBuild(this.run))
+    this.refresh()
+  }
+
+  private eraseSave(): void {
+    this.confirmErase = false
     this.store.remove(SAVE_KEY)
     this.store.remove(RUN_KEY)
     this.save = defaultSave()
@@ -1108,6 +1151,8 @@ export class Game {
     document.body.classList.toggle('contrast', s.highContrast)
     document.body.classList.toggle('reduce-motion', !s.cameraMotion)
     document.documentElement.style.setProperty('--ui-scale', String(s.hudScale))
+    document.documentElement.style.setProperty('--touch-scale', String(s.touchSize))
+    document.body.classList.toggle('left-handed', s.leftHanded)
     this.input.bindings = { ...s.bindings }
     this.audio.setVolumes(s.sfx, s.music)
   }
@@ -1125,6 +1170,16 @@ export class Game {
       if (this.toasts.length > 4) this.toasts.shift()
     }
     this.renderToasts()
+  }
+
+  /** A short buzz on a touch device, if the player wants it. */
+  private buzz(pattern: number | number[]): void {
+    if (!this.save.settings.haptics || !this.input.touchMode || typeof navigator.vibrate !== 'function') return
+    try {
+      navigator.vibrate(pattern)
+    } catch {
+      // Some browsers throw instead of ignoring vibration without a gesture.
+    }
   }
 
   private say(text: string): void {
@@ -1201,6 +1256,9 @@ export class Game {
       seedText: this.seedText,
       touch: this.input.touchMode,
       canFullscreen: !!document.fullscreenEnabled,
+      labPanel: this.labPanel,
+      selectedNode: this.selectedNode,
+      confirmErase: this.confirmErase,
     }
     const active = document.activeElement as HTMLElement | null
     const focusKey = active && this.screenEl.contains(active) ? focusKeyOf(active) : null
@@ -1246,7 +1304,6 @@ function focusKeyOf(el: HTMLElement): string | null {
   if (d.act) return `[data-act="${d.act}"]${d.arg !== undefined ? `[data-arg="${CSS.escape(d.arg)}"]` : ''}`
   if (d.set) return `[data-set="${d.set}"]`
   if (d.flag) return `[data-flag="${d.flag}"]`
-  if (d.slot) return `[data-slot="${d.slot}"]`
   if (d.seed !== undefined) return '[data-seed]'
   return null
 }

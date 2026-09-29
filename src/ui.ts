@@ -62,6 +62,11 @@ export interface View {
   /** The player is on a touch screen: no key hints, touch wording. */
   touch: boolean
   canFullscreen: boolean
+  /** Which lab drawer is open: a slot's parts, the presets, or the numbers. */
+  labPanel: Slot | 'presets' | 'stats' | null
+  /** Map room picked on a touch screen, shown before entering. */
+  selectedNode: string | null
+  confirmErase: boolean
 }
 
 export const SLOT_LABEL: Record<Slot, string> = {
@@ -296,8 +301,16 @@ function chip(ico: string, value: string, label: string, cls = ''): string {
   return `<span class="chip-stat ${cls}" title="${esc(label)}" aria-label="${esc(label)}">${ico}<b>${value}</b></span>`
 }
 
-function kbd(text: string): string {
-  return `<kbd class="kbd">${esc(text)}</kbd>`
+/** A chip that says what it means when tapped, since touch screens have no hover. */
+function infoChip(ico: string, value: string, label: string, cls = ''): string {
+  return `<span class="chip-stat tappable ${cls}" data-act="explain" data-arg="${esc(label)}" title="${esc(label)}" aria-label="${esc(label)}">${ico}<b>${value}</b></span>`
+}
+
+/** A part's colour behind its slot icon, so parts in the same slot tell apart. */
+function swatch(id: string | null | undefined, slot: Slot, size = 26): string {
+  const v = id ? COMPONENT_MAP[id]?.visual : undefined
+  const color = v?.core ?? v?.shell ?? v?.trail ?? '#3a2e25'
+  return `<span class="swatch${id ? '' : ' empty'}" style="--c:${color}">${slotIcon(slot, size)}</span>`
 }
 
 function slotIcon(slot: Slot, size = 22): string {
@@ -391,9 +404,9 @@ export function screenHtml(view: View): string {
 
 function currencies(save: SaveData, run: RunState | null): string {
   return `<div class="currencies">
-    ${run ? chip(icon('currency-cinders'), `${run.cinders}`, `${run.cinders} cinders: spent during this run`, 'cur cinder') : ''}
-    ${chip(icon('currency-scrap'), `${save.scrap}`, `${save.scrap} scrap: forges new parts in the codex, between runs`, 'cur scrap')}
-    ${chip(icon('currency-embers'), `${save.embers}`, `${save.embers} embers: kept between runs, spent on evolutions and fusions`, 'cur ember')}
+    ${run ? infoChip(icon('currency-cinders'), `${run.cinders}`, `${run.cinders} cinders: spent during this run`, 'cur cinder') : ''}
+    ${infoChip(icon('currency-scrap'), `${save.scrap}`, `${save.scrap} scrap: forges new parts in the codex, between runs`, 'cur scrap')}
+    ${infoChip(icon('currency-embers'), `${save.embers}`, `${save.embers} embers: kept between runs, spent on evolutions and fusions`, 'cur ember')}
   </div>`
 }
 
@@ -452,21 +465,30 @@ export function controlsLine(save: SaveData): string {
 
 function settingsHtml(view: View): string {
   const s = view.save.settings
-  const range = (key: string, ico: IconName, label: string, min: number, max: number, step: number, value: number, fmt = (v: number) => `${Math.round(v * 100)}%`) =>
+  const range = (key: string, ico: IconName, label: string, min: number, max: number, step: number, value: number) =>
     `<label class="field range">
-      <span class="field-head">${svg(ico, 18)}<span>${label}</span><output data-out="${key}">${fmt(value)}</output></span>
-      <input data-set="${key}" type="range" min="${min}" max="${max}" step="${step}" value="${value}" />
+      <span class="field-head">${svg(ico, 18)}<span>${label}</span><output data-out="${key}">${Math.round(value * 100)}%</output></span>
+      <input data-set="${key}" type="range" min="${min}" max="${max}" step="${step}" value="${value}" style="--fill:${(((value - min) / (max - min)) * 100).toFixed(1)}%" />
     </label>`
   const toggle = (key: string, label: string, value: boolean, hint = '') =>
     `<label class="toggle"><span>${label}${hint ? `<small class="muted">${hint}</small>` : ''}</span><input data-flag="${key}" type="checkbox" role="switch" ${value ? 'checked' : ''}/></label>`
-  const segment = (key: string, options: [number, string][], value: number) =>
-    `<select data-set="${key}">${options.map(([v, l]) => `<option value="${v}" ${value === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`
+  // Choices are a row of buttons, not drop-downs.
+  const segment = (key: string, ico: IconName, label: string, options: [number, string][], value: number) =>
+    `<div class="field"><span class="field-head">${svg(ico, 18)}<span>${label}</span></span>
+      <div class="segmented" role="radiogroup" aria-label="${label}">${options.map(([v, l]) =>
+        `<button class="btn seg ${value === v ? 'on' : ''}" role="radio" aria-checked="${value === v}" data-act="set" data-arg="${key}:${v}">${l}</button>`).join('')}</div></div>`
   const counts = new Map<string, number>()
   for (const btn of BTNS) counts.set(s.bindings[btn], (counts.get(s.bindings[btn]) ?? 0) + 1)
   const bind = (btn: Btn) => {
     const clash = (counts.get(s.bindings[btn]) ?? 0) > 1
     return `<button class="btn bind ${clash ? 'clash' : ''}" data-act="rebind" data-arg="${btn}"><span>${BTN_LABEL[btn]}</span><b>${view.rebinding === btn ? 'press a key…' : esc(keyName(s.bindings[btn]))}</b>${clash ? svg('warning', 16) : ''}</button>`
   }
+  const erase = view.confirmErase
+    ? `<div class="confirm-row" role="alertdialog" aria-label="Erase progress">
+        <span class="down">${svg('warning', 18)} Erase all progress and settings? This cannot be undone.</span>
+        <div class="row two"><button class="btn" data-act="erase-cancel" data-autofocus>${svg('back', 18)}<span>Keep</span></button><button class="btn danger" data-act="erase-confirm">${svg('trash', 18)}<span>Erase</span></button></div>
+      </div>`
+    : `<div class="row"><button class="btn danger tiny" data-act="reset-save">${svg('trash', 16)} Erase progress…</button></div>`
   return `<div class="panel stack scroll settings">
     ${header('Settings', '', { back: 'close' })}
     <div class="settings-grid">
@@ -482,7 +504,7 @@ function settingsHtml(view: View): string {
         <h3>${svg('eye', 20)} Readability</h3>
         ${toggle('highContrast', 'High contrast', s.highContrast)}
         ${toggle('colorblind', 'Shape markers', s.colorblind, 'letters on constructs, patterns on the ball')}
-        ${range('hudScale', 'info', 'Interface size', 0.8, 1.5, 0.05, s.hudScale)}
+        ${segment('hudScale', 'info', 'Interface size', [[0.85, 'S'], [1, 'M'], [1.15, 'L'], [1.3, 'XL']], s.hudScale)}
       </section>
       <section class="stack">
         <h3>${svg('volume', 20)} Audio</h3>
@@ -490,9 +512,15 @@ function settingsHtml(view: View): string {
         ${range('music', 'volume', 'Music', 0, 1, 0.05, s.music)}
       </section>
       <section class="stack">
+        <h3>${svg('hop', 20)} Touch</h3>
+        ${segment('touchSize', 'target', 'Control size', [[0.85, 'S'], [1, 'M'], [1.15, 'L'], [1.3, 'XL']], s.touchSize)}
+        ${toggle('leftHanded', 'Left-handed', s.leftHanded, 'stick on the right, buttons on the left')}
+        ${toggle('haptics', 'Vibration', s.haptics, 'on hits, where the device supports it')}
+      </section>
+      <section class="stack">
         <h3>${svg('assist', 20)} Assists</h3>
-        <label class="field row-field"><span>${svg('gauge', 18)} Game speed</span>${segment('gameSpeed', [[0.7, '70%'], [0.85, '85%'], [1, '100%'], [1.15, '115%']], s.gameSpeed)}</label>
-        <label class="field row-field"><span>${svg('shield', 18)} Damage taken</span>${segment('assistDamage', [[1, '100%'], [0.75, '75%'], [0.5, '50%']], s.assistDamage)}</label>
+        ${segment('gameSpeed', 'gauge', 'Game speed', [[0.7, '70%'], [0.85, '85%'], [1, '100%'], [1.15, '115%']], s.gameSpeed)}
+        ${segment('assistDamage', 'shield', 'Damage taken', [[1, '100%'], [0.75, '75%'], [0.5, '50%']], s.assistDamage)}
         <p class="muted small">Assists are noted on the run summary. They never lock anything.</p>
       </section>
       <section class="stack wide kbd-only">
@@ -502,7 +530,7 @@ function settingsHtml(view: View): string {
         <div class="row"><button class="btn tiny" data-act="reset-keys">${svg('refresh', 16)} Reset keys</button></div>
       </section>
     </div>
-    <div class="row"><button class="btn danger tiny" data-act="reset-save">${svg('trash', 16)} Erase progress…</button></div>
+    ${erase}
   </div>`
 }
 
@@ -532,7 +560,7 @@ function codexHtml(view: View): string {
         ? `<button class="btn tiny forge" data-act="unlock" data-arg="${c.id}" ${short ? 'disabled' : ''} aria-label="Forge for ${c.unlockCost} scrap${short ? `, need ${short} more` : ''}">${svg(short ? 'lock' : 'wrench', 16)}${icon('currency-scrap', 18)}<b>${c.unlockCost}</b></button>`
         : standard ? `<span class="tag ok">${svg('check', 14)} In pool</span>` : `<span class="tag">${c.pool}</span>`
       return `<article class="codex-card" data-rarity="${c.rarity}">
-        <div class="cc-head">${slotIcon(c.slot, 30)}<div><h3>${esc(c.name)}</h3><div class="rarity ${c.rarity}">${SLOT_LABEL[c.slot]} · ${c.rarity}</div></div></div>
+        <div class="cc-head">${swatch(c.id, c.slot, 26)}<div><h3>${esc(c.name)}</h3><div class="rarity ${c.rarity}">${SLOT_LABEL[c.slot]} · ${c.rarity}</div></div></div>
         <p class="desc">${esc(c.description)}</p>
         <p class="up">${svg('up', 12)} ${esc(c.upside)}</p>
         <p class="down">${svg('down', 12)} ${esc(c.downside)}</p>
@@ -554,7 +582,11 @@ function codexHtml(view: View): string {
         e.shield ? `<span class="tag" title="Frontal rams under ${e.shieldBreak} are blocked; hit from above or behind">${svg('shield', 14)} Front shield</span>` : '',
         ...(e.resists ?? []).map((r) => `<span class="tag ${r.mul < 1 ? 'resist' : 'weak'}">${esc(r.tag)} ×${r.mul}</span>`),
       ].filter(Boolean).join('')
-      return `<article class="codex-card"><div class="cc-head">${svg('target', 28)}<h3>${esc(e.name)}</h3></div><p class="desc">${esc(e.codex)}</p><p class="small muted">${esc(e.question)}</p>${traits ? `<div class="chips">${traits}</div>` : ''}</article>`
+      const why = [
+        e.armorGate ? `Rams under ${e.armorGate} are cut to ${Math.round((e.armorMul ?? 1) * 100)}%.` : '',
+        e.shield ? `Frontal rams under ${e.shieldBreak} are blocked: hit from above or behind.` : '',
+      ].filter(Boolean).join(' ')
+      return `<article class="codex-card"><div class="cc-head">${svg('target', 28)}<h3>${esc(e.name)}</h3></div><p class="desc">${esc(e.codex)}</p><p class="small muted">${esc(e.question)}</p>${traits ? `<div class="chips">${traits}</div>` : ''}${why ? `<p class="small muted">${esc(why)}</p>` : ''}</article>`
     }).join('')}</div>`
   } else {
     body = `<div class="grid">${ACHIEVEMENTS.map((a) => {
@@ -630,8 +662,9 @@ function mapHtml(view: View): string {
       edges += `<line class="${cls}" x1="${a.x + NODE_W}" y1="${a.y + NODE_H / 2}" x2="${b.x}" y2="${b.y + NODE_H / 2}" />`
     }
   }
-  const first = run.nodes.find((n) => n.state === 'open')
-  const nodes = run.nodes.map((n) => nodeButton(n, build, run, pos.get(n.id)!, n === first)).join('')
+  const picked = run.nodes.find((n) => n.id === view.selectedNode && n.state === 'open')
+  const first = picked ?? run.nodes.find((n) => n.state === 'open')
+  const nodes = run.nodes.map((n) => nodeButton(n, build, run, pos.get(n.id)!, n === first, n === picked)).join('')
   const stats = `${chip(svg('heart', 18), `${Math.ceil(run.hp)}/${Math.round(build.stats.maxHp)}`, `Integrity ${Math.ceil(run.hp)} of ${Math.round(build.stats.maxHp)}`, 'hp')}${run.heat ? chip(svg('flame', 18), `${run.heat}`, `Forge heat ${run.heat}`, 'heat') : ''}`
   return `<div class="panel stack scroll route">
     ${header('Choose a route', build.archetype, { right: `${stats}${currencies(view.save, run)}${iconBtn('menu', 'menu', 'Build and menu')}` })}
@@ -639,11 +672,27 @@ function mapHtml(view: View): string {
       <svg class="edges" width="${width}" height="${height}" aria-hidden="true">${edges}</svg>
       ${nodes}
     </div></div>
+    ${picked ? nodeInfo(picked, build, run) : view.touch ? `<p class="map-hint muted small">${svg('info', 16)} Tap a glowing room to see it. Tap again to go.</p>` : ''}
     <div class="map-legend" aria-hidden="true"><span>${svg('warning', 14)} risk</span><span>${icon('slot-core', 14)} part</span><span>${icon('currency-cinders', 14)} cinders</span><span>${icon('currency-embers', 14)} ember</span></div>
   </div>`
 }
 
-function nodeButton(n: MapNode, build: CompiledBuild, run: RunState, p: { x: number; y: number }, focus: boolean): string {
+/** The picked room, spelled out, with a big button to go. */
+function nodeInfo(n: MapNode, build: CompiledBuild, run: RunState): string {
+  const info = routeInfo(n.type, build, run)
+  return `<div class="node-info" role="region" aria-label="${esc(info.label)}">
+    <span class="glyph big" aria-hidden="true">${svg(NODE_ICON[n.type] ?? 'star', 26)}</span>
+    <div class="ni-text">
+      <b>${esc(info.label)}</b>
+      <span class="small"><span class="down">${svg('warning', 14)}</span> ${esc(info.risk)}</span>
+      <span class="small"><span class="up">${svg('plus', 14)}</span> ${esc(info.reward)}</span>
+      <span class="small muted">${esc(info.advice)}</span>
+    </div>
+    <button class="btn primary go" data-act="enter" data-arg="${n.id}" data-go="1" aria-label="Enter ${esc(info.label)}">${svg('play', 22)}<span>Go</span></button>
+  </div>`
+}
+
+function nodeButton(n: MapNode, build: CompiledBuild, run: RunState, p: { x: number; y: number }, focus: boolean, selected: boolean): string {
   const info = routeInfo(n.type, build, run)
   const state = n.state === 'open' ? 'Available' : n.state === 'done' ? 'Cleared' : n.state === 'active' ? 'Here' : n.state === 'missed' ? 'Passed by' : 'Later'
   const risk = riskLevel(info.risk)
@@ -651,7 +700,7 @@ function nodeButton(n: MapNode, build: CompiledBuild, run: RunState, p: { x: num
     ? `<span class="node-meta"><span class="risk" data-level="${risk}" aria-hidden="true"><i></i><i></i><i></i></span><span class="pays">${NODE_REWARD[n.type].map((r) => icon(r, 16)).join('')}${n.type === 'boss' ? svg('trophy', 16) : n.type === 'event' ? svg('question', 16) : ''}</span></span>`
     : n.state === 'done' ? `<span class="node-state">${svg('check', 16)}</span>` : n.state === 'missed' ? `<span class="node-state">${svg('close', 14)}</span>` : ''
   const here = run.currentId === n.id && (n.state === 'done' || n.state === 'active')
-  return `<button class="btn node ${n.state} type-${n.type}${here ? ' here' : ''}" style="left:${p.x}px;top:${p.y}px;width:${NODE_W}px;height:${NODE_H}px;--d:${n.depth}" data-act="enter" data-arg="${n.id}" ${n.state === 'open' ? '' : 'disabled'} ${focus ? 'data-autofocus' : ''} title="${esc(`${info.label}. Risk: ${info.risk} Reward: ${info.reward} ${info.advice}`)}" aria-label="${esc(`${info.label}. ${state}. ${n.state === 'open' ? `Risk: ${info.risk} Reward: ${info.reward} ${info.advice}` : ''}`)}">
+  return `<button class="btn node ${n.state} type-${n.type}${here ? ' here' : ''}${selected ? ' selected' : ''}" style="left:${p.x}px;top:${p.y}px;width:${NODE_W}px;height:${NODE_H}px;--d:${n.depth}" data-act="enter" data-arg="${n.id}" ${n.state === 'open' ? '' : 'disabled'} ${focus ? 'data-autofocus' : ''} title="${esc(`${info.label}. Risk: ${info.risk} Reward: ${info.reward} ${info.advice}`)}" aria-label="${esc(`${info.label}. ${state}. ${n.state === 'open' ? `Risk: ${info.risk} Reward: ${info.reward} ${info.advice}` : ''}`)}">
     <span class="node-head"><span class="glyph" aria-hidden="true">${svg(NODE_ICON[n.type] ?? 'star', 18)}</span><b>${esc(info.label)}</b></span>${meta}
   </button>`
 }
@@ -856,32 +905,70 @@ export function presetIds(name: string, save: SaveData): Record<Slot, string> | 
   return ids
 }
 
+/**
+ * The lab is a dock over a live room: a strip of the six slots on top, and at
+ * most one drawer under it. Swapping a part never pauses, so the ball can be
+ * tried the moment it changes. Closing the drawer leaves only the strip.
+ */
 function labHtml(view: View): string {
   const build = view.build
   if (!build) return ''
-  const options = (slot: Slot) => {
-    const list = COMPONENTS.filter((c) => c.slot === slot && (c.pool === 'standard' ? view.save.unlocked.includes(c.id) : view.save.discoveredComponents.includes(c.id)))
-    return ['<option value="">Empty</option>'].concat(list.map((c) => `<option value="${c.id}" ${build.ids[slot] === c.id ? 'selected' : ''}>${esc(c.name)}</option>`)).join('')
-  }
-  const feel = feelNumbers(build.stats)
+  const panel = view.labPanel
   const paused = view.labPaused
-  return `<div class="lab-list ${paused ? 'active' : ''}">
+  const slots = SLOTS.map((slot) => {
+    const id = build.ids[slot]
+    const comp = id ? COMPONENT_MAP[id] : undefined
+    const label = `${SLOT_LABEL[slot]}: ${comp ? comp.name : 'empty'}`
+    return `<button class="btn lab-slot ${panel === slot ? 'on' : ''}" data-act="lab-panel" data-arg="${slot}" aria-pressed="${panel === slot}" aria-label="${esc(label)}" title="${esc(label)}" data-rarity="${comp?.rarity ?? ''}">${swatch(id, slot, 22)}<span class="slot-name">${comp ? esc(comp.name) : SLOT_LABEL[slot]}</span></button>`
+  }).join('')
+  const toggle = (id: 'presets' | 'stats', ico: IconName, label: string) =>
+    `<button class="btn icon-btn ${panel === id ? 'on' : ''}" data-act="lab-panel" data-arg="${id}" aria-pressed="${panel === id}" aria-label="${label}" title="${label}">${svg(ico)}</button>`
+  return `<div class="lab-dock ${panel ? 'open' : ''} ${paused ? 'paused' : ''}">
     <div class="lab-bar">
-      <div class="head-text"><div class="kicker">Ball lab${paused ? '' : `<span class="kbd-only"> · ${kbd('Esc')} edit</span>`}</div><h2>${esc(build.archetype)}</h2></div>
-      ${paused
-        ? `<button class="btn primary icon-btn" data-act="lab-resume" data-autofocus aria-label="Back to rolling" title="Back to rolling">${svg('play')}</button>`
-        : iconBtn('lab-edit', 'wrench', 'Edit parts')}
       ${iconBtn('title', 'exit', 'Leave lab')}
+      <div class="lab-name"><div class="kicker">Ball lab${paused ? ' · paused' : ''}</div><b>${esc(build.archetype)}</b></div>
+      <div class="lab-slots" role="group" aria-label="Parts">${slots}</div>
+      <div class="lab-tools">
+        ${toggle('presets', 'star', 'Preset builds')}
+        ${toggle('stats', 'gauge', 'How it handles')}
+        ${paused ? `<button class="btn primary icon-btn" data-act="lab-resume" data-autofocus aria-label="Back to rolling" title="Back to rolling">${svg('play')}</button>` : ''}
+      </div>
     </div>
-    <div class="lab-body">
-      <div class="presets" role="group" aria-label="Presets">${PRESETS.map((p) => `<button class="btn preset" data-act="preset" data-arg="${p.name}" aria-label="${p.name} preset" title="${p.name}">${icon(PRESET_ICON[p.name] ?? 'core-balanced', 22)}<span>${p.name}</span></button>`).join('')}</div>
-      <div class="slot-fields">${SLOTS.map((slot) => `<label class="field slot-field" title="${SLOT_LABEL[slot]}">${slotIcon(slot, 24)}<span class="sr-only">${SLOT_LABEL[slot]}</span><select data-slot="${slot}">${options(slot)}</select></label>`).join('')}</div>
-      <div class="bars">${feel.map((b) => `<div class="bar-row"><span>${b.label}</span><span class="bar"><em style="width:${b.value * 100}%"></em></span></div>`).join('')}</div>
-      <details><summary>${svg('info', 16)} Numbers</summary>${statTable(build.stats)}</details>
-      ${build.strengths.length ? `<p class="up small">${svg('up', 12)} ${esc(build.strengths.join(' '))}</p>` : ''}
-      ${build.weaknesses.length ? `<p class="down small">${svg('down', 12)} ${esc(build.weaknesses.join(' '))}</p>` : ''}
-    </div>
+    ${panel ? `<div class="lab-drawer">${labDrawer(view, build, panel)}</div>` : ''}
   </div>`
+}
+
+function labDrawer(view: View, build: CompiledBuild, panel: Slot | 'presets' | 'stats'): string {
+  const close = iconBtn('lab-panel', 'close', 'Close', `data-arg="${panel}"`)
+  if (panel === 'presets') {
+    return `<div class="drawer-head"><h3>${svg('star', 18)} Presets</h3>${close}</div>
+      <div class="part-row">${PRESETS.map((p) => `<button class="btn part-tile" data-act="preset" data-arg="${p.name}">${icon(PRESET_ICON[p.name] ?? 'core-balanced', 30)}<b>${p.name}</b></button>`).join('')}</div>`
+  }
+  if (panel === 'stats') {
+    const feel = feelNumbers(build.stats)
+    return `<div class="drawer-head"><h3>${svg('gauge', 18)} ${esc(build.archetype)}</h3>${close}</div>
+      <div class="lab-stats">
+        <div class="bars">${feel.map((b) => `<div class="bar-row"><span>${b.label}</span><span class="bar"><em style="width:${b.value * 100}%"></em></span></div>`).join('')}</div>
+        <div class="stack">
+          ${build.strengths.length ? `<p class="up small">${svg('up', 12)} ${esc(build.strengths.join(' '))}</p>` : ''}
+          ${build.weaknesses.length ? `<p class="down small">${svg('down', 12)} ${esc(build.weaknesses.join(' '))}</p>` : ''}
+          <details><summary>${svg('info', 16)} Numbers</summary>${statTable(build.stats)}</details>
+        </div>
+      </div>`
+  }
+  const slot = panel
+  const current = build.ids[slot]
+  const list = COMPONENTS.filter((c) => c.slot === slot && (c.pool === 'standard' ? view.save.unlocked.includes(c.id) : view.save.discoveredComponents.includes(c.id)))
+  const locked = COMPONENTS.filter((c) => c.slot === slot && c.pool === 'standard' && !view.save.unlocked.includes(c.id))
+  const comp = current ? COMPONENT_MAP[current] : undefined
+  const tiles = [
+    `<button class="btn part-tile ${current ? '' : 'on'}" data-act="lab-part" data-arg="${slot}:" aria-pressed="${!current}">${swatch(null, slot, 30)}<b>Empty</b></button>`,
+    ...list.map((c) => `<button class="btn part-tile ${c.id === current ? 'on' : ''}" data-rarity="${c.rarity}" data-act="lab-part" data-arg="${slot}:${c.id}" aria-pressed="${c.id === current}">${swatch(c.id, slot, 30)}<b>${esc(c.name)}</b><span class="rarity ${c.rarity}">${c.rarity}</span></button>`),
+    ...locked.map((c) => `<button class="btn part-tile locked" disabled aria-label="${esc(c.name)}: forge it in the codex">${swatch(c.id, slot, 30)}<b>${esc(c.name)}</b><span class="small muted">${svg('lock', 12)} ${c.unlockCost}</span></button>`),
+  ].join('')
+  return `<div class="drawer-head"><h3>${slotIcon(slot, 20)} ${SLOT_LABEL[slot]}</h3>${close}</div>
+    <div class="part-row">${tiles}</div>
+    ${comp ? `<div class="part-info"><p class="up small">${svg('up', 12)} ${esc(comp.upside)}</p><p class="down small">${svg('down', 12)} ${esc(comp.downside)}</p></div>` : ''}`
 }
 
 export function defaultBindingsEqual(save: SaveData): boolean {

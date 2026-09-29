@@ -297,6 +297,14 @@ try {
     await p.waitForTimeout(150)
     check('touch pause button pauses', (await p.evaluate(() => window.ballborn.screen)) === 'pause')
     await p.screenshot({ path: `${SHOTS}/15-touch-pause.png` })
+    // The lab swaps parts with taps, and the ball keeps rolling while it does.
+    await p.evaluate(() => window.ballborn.goTitle())
+    await p.tap('[data-act="lab"]')
+    await p.waitForTimeout(300)
+    await p.tap('[data-act="lab-panel"][data-arg="core"]')
+    await p.tap('[data-act="lab-part"][data-arg="core:heavy-core"]')
+    check('lab parts swap by tap without pausing', await p.evaluate(() => window.ballborn.run.ids.core === 'heavy-core' && !window.ballborn.labPaused && document.querySelectorAll('#screen select').length === 0))
+    await p.screenshot({ path: `${SHOTS}/16-touch-lab.png` })
     await ctx.close()
   }
 
