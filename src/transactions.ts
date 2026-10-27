@@ -108,14 +108,11 @@ export function evolve(run: RunState, save: SaveData | null, from: string, to: s
 }
 
 export function describeReport(r: EquipReport): string {
-  const parts: string[] = []
-  for (const c of r.added) parts.push(`${c.name} fitted.`)
+  // Short enough for a toast: the card already showed the numbers.
+  const parts: string[] = r.added.map((c) => c.name)
   const empty = r.removed.filter((c) => !r.added.some((a) => a.slot === c.slot))
-  for (const c of empty) parts.push(`${c.name} consumed; the ${c.slot} slot is empty.`)
-  if (r.gained.length) parts.push(`Gained: ${r.gained.join(', ')}.`)
-  if (r.lost.length) parts.push(`Lost: ${r.lost.join(', ')}.`)
-  if (Math.round(r.maxAfter) !== Math.round(r.maxBefore)) parts.push(`Integrity ${Math.round(r.hpBefore)}/${Math.round(r.maxBefore)} → ${Math.round(r.hpAfter)}/${Math.round(r.maxAfter)}.`)
-  return parts.join(' ')
+  for (const c of empty) parts.push(`−${c.name}`)
+  return parts.join(' · ')
 }
 
 export type RewardResult = { text: string; report?: EquipReport }
@@ -130,25 +127,25 @@ export function takeOffer(run: RunState, save: SaveData, offer: Offer): RewardRe
     const max = currentBuild(run).stats.maxHp
     const before = run.hp
     run.hp = Math.min(max, run.hp + (offer.amount ?? 0))
-    return { text: `Welded ${Math.round(run.hp - before)} integrity.` }
+    return { text: `+${Math.round(run.hp - before)}` }
   }
   if (offer.kind === 'cinders') {
     run.cinders += offer.amount ?? 0
-    return { text: `+${offer.amount ?? 0} cinders.` }
+    return { text: `+${offer.amount ?? 0} cinders` }
   }
   if (offer.kind === 'reroll') {
     run.rerolls += offer.amount ?? 1
-    return { text: `+${offer.amount ?? 1} reroll token.` }
+    return { text: `+${offer.amount ?? 1}` }
   }
   save.embers += offer.amount ?? 1
-  return { text: `+${offer.amount ?? 1} ember (kept between runs).` }
+  return { text: `+${offer.amount ?? 1} ember` }
 }
 
 export function takeSalvage(run: RunState): RewardResult {
   const n = salvageValue(run.offerKind)
   run.cinders += n
   run.decisions.push('Kept the build')
-  return { text: `Salvaged ${n} cinders. The ball stays as it is.` }
+  return { text: `+${n} cinders` }
 }
 
 export function buyItem(run: RunState, save: SaveData, item: ShopItem): RewardResult | null {
@@ -161,13 +158,13 @@ export function buyItem(run: RunState, save: SaveData, item: ShopItem): RewardRe
     const max = currentBuild(run).stats.maxHp
     const before = run.hp
     run.hp = Math.min(max, run.hp + (item.amount ?? max * 0.45))
-    result = { text: `Welded ${Math.round(run.hp - before)} integrity.` }
+    result = { text: `+${Math.round(run.hp - before)}` }
   } else if (item.kind === 'reroll') {
     run.rerolls += item.amount ?? 1
-    result = { text: '+1 reroll token.' }
+    result = { text: `+${item.amount ?? 1}` }
   } else {
     save.embers += item.amount ?? 1
-    result = { text: '+1 ember.' }
+    result = { text: `+${item.amount ?? 1} ember` }
   }
   run.cinders -= item.cost
   item.sold = true

@@ -111,6 +111,12 @@ export class Hud {
     this.el(id).textContent = value
   }
 
+  private html(id: string, value: string): void {
+    if (this.last.get(`${id}#html`) === value) return
+    this.last.set(`${id}#html`, value)
+    this.el(id).innerHTML = value
+  }
+
   private style(id: string, prop: 'width' | 'background', value: string): void {
     const key = `${id}.${prop}`
     if (this.last.get(key) === value) return
@@ -162,7 +168,7 @@ export class Hud {
   /** A big title that slams in and fades: room names, the boss, the open gate. */
   banner(title: string, sub: string, kind: 'room' | 'boss' | 'clear' | 'phase', portrait = ''): void {
     const el = this.el('banner')
-    el.innerHTML = `<div class="banner-inner ${kind}">${portrait ? `<img class="portrait" src="${portrait}" alt="" />` : ''}<div class="banner-kicker">${kind === 'boss' ? 'Final hold' : kind === 'clear' ? 'Room clear' : kind === 'phase' ? 'The Colossus shifts' : 'The Foundry'}</div><div class="banner-title">${esc(title)}</div>${sub ? `<div class="banner-sub">${esc(sub)}</div>` : ''}</div>`
+    el.innerHTML = `<div class="banner-inner ${kind}">${portrait ? `<img class="portrait" src="${portrait}" alt="" />` : ''}<div class="banner-title">${esc(title)}</div>${sub ? `<div class="banner-sub">${esc(sub)}</div>` : ''}</div>`
     this.bannerLeft = kind === 'boss' ? 3.2 : kind === 'room' ? 2.4 : 1.6
   }
 
@@ -210,10 +216,12 @@ export class Hud {
     this.toggle('hp-meter', 'low', low)
     this.text('hp-num', `${Math.ceil(sim.hp)}/${Math.ceil(sim.maxHp)}${sim.shield > 0 ? ` +${Math.ceil(sim.shield)}` : ''}`)
     this.attr('hp-meter', 'aria-label', `Integrity ${Math.ceil(sim.hp)} of ${Math.ceil(sim.maxHp)}${sim.shield > 0 ? `, shield ${Math.ceil(sim.shield)}` : ''}`)
-    this.text('hp-warn', low ? 'CRACKED' : '')
     this.text('room-name', sim.room.name)
-    const extra = sim.room.rules?.includes('survival') && !sim.exitOpen ? ` · ${Math.ceil(sim.survivalLeft)} s` : sim.room.rules?.includes('speed-gate') ? ' · keep speed' : ''
-    this.text('room-obj', (sim.exitOpen ? 'Gate open →' : sim.objectiveText() + extra))
+    // The objective reads as an icon and a count; the sentence is for hover and screen readers.
+    this.html('room-obj', objectiveBadge(sim))
+    const goal = sim.exitOpen ? 'Gate open' : sim.objectiveText()
+    this.attr('room-obj', 'aria-label', goal)
+    this.attr('room-obj', 'title', goal)
     this.toggle('room-obj', 'open', sim.exitOpen)
     const cinders = run ? run.cinders + sim.cinderPocket : 0
     this.text('cinders', run ? `${cinders}` : '')
@@ -227,29 +235,26 @@ export class Hud {
       this.bossChip = this.bossChip > pct ? Math.max(pct, this.bossChip - dt * 30) : pct
       this.style('boss-fill', 'width', `${pct.toFixed(1)}%`)
       this.style('boss-chip', 'width', `${this.bossChip.toFixed(1)}%`)
-      this.text('boss-phase', `Phase ${boss.phase}${boss.phase === 1 ? ' · plated' : boss.phase === 2 ? ' · heart open' : ' · floor failing'}`)
+      this.text('boss-phase', `${boss.phase}/3`)
       this.attr('boss-bar', 'data-phase', String(boss.phase))
     }
     const ability = build.ability
     const block = sim.abilityBlock()
-    this.text('ability-name', ability ? ability.name : 'No ability')
     this.text('ability-key', keyName(save.settings.bindings.ability))
-    const state = !ability ? '' : block === 'cooldown' ? `${sim.abilityCd.toFixed(1)}s` : block === 'energy' ? `⚡${Math.ceil(ability.energy)}` : 'READY'
+    const state = !ability ? '' : block === 'cooldown' ? `${sim.abilityCd.toFixed(1)}` : block === 'energy' ? `⚡${Math.ceil(ability.energy)}` : ''
     this.text('ability-state', state)
     const readyNow = !!ability && block === null
     if (readyNow && this.last.get('ability-readout@data-state') !== 'ready') this.pulse('ability-dial', [{ transform: 'scale(1.3)', filter: 'brightness(2)' }, { transform: 'scale(1)', filter: 'none' }], 420)
     this.attr('ability-readout', 'data-state', !ability ? 'none' : block ?? 'ready')
-    this.attr('ability-dial', 'aria-label', ability ? `${ability.name}: ${state}` : 'No ability')
+    this.attr('ability-dial', 'aria-label', ability ? `${ability.name}: ${state || 'ready'}` : 'No ability')
     const cd = ability && sim.abilityCd > 0 ? 1 - sim.abilityCd / ability.cooldown : 1
     this.prop('ability-dial', '--p', `${(Math.max(0, Math.min(1, cd)) * 100).toFixed(0)}%`)
     this.style('energy-bar', 'width', `${((sim.energy / build.stats.energyMax) * 100).toFixed(0)}%`)
-    this.text('energy-num', `⚡ ${Math.floor(sim.energy)}/${Math.round(build.stats.energyMax)}${ability ? ` · −${ability.energy}` : ''}`)
     const speed = Math.round(hypot(sim.ball.vx, sim.ball.vy))
     const ratio = speed / Math.max(1, sim.stats.maxSpeed)
     const armed = ratio >= TUNE.cleanRamRatio
     this.style('speed-bar', 'width', `${(Math.min(1, ratio) * 100).toFixed(0)}%`)
     this.toggle('speed-meter', 'armed', armed)
-    this.text('speed-read', armed ? `RAM ${Math.round(speed / 10) * 10}` : `${Math.round(speed / 10) * 10}`)
     // Combo: a big number that pops on every link and drains between them.
     this.show('combo', sim.combo > 1)
     if (sim.combo > 1) {
@@ -273,6 +278,17 @@ export class Hud {
   }
 }
 
+
+/** What the room wants, as an icon and a number: constructs left, seconds left, or the open gate. */
+function objectiveBadge(sim: Simulation): string {
+  if (sim.exitOpen) return `${svg('door', 18)}<b>→</b>`
+  const boss = sim.boss
+  if (boss && boss.alive) return boss.phase === 1 ? `${svg('target', 18)}<b>${boss.rivets.filter((r) => r.alive).length}</b>` : ''
+  if (sim.room.rules?.includes('survival')) return `${svg('hourglass', 18)}<b>${Math.ceil(sim.survivalLeft)}</b>`
+  if (sim.room.rules?.includes('speed-gate')) return svg('gauge', 18)
+  const left = sim.enemies.filter((e) => e.alive).length
+  return left ? `${svg('target', 18)}<b>${left}</b>` : ''
+}
 
 // ---------------------------------------------------------------------------
 // Small shared pieces.
@@ -421,7 +437,6 @@ function titleHtml(view: View): string {
   return `<div class="title-wrap">
     <div class="title-lockup">
       <div class="title-brand">
-        <div class="kicker">Foundry slice</div>
         <h1 aria-label="Ballborn"><span class="logo-line">${letters('BALL', 0)}</span><span class="logo-line hot">${letters('BORN', 4)}</span></h1>
         <p class="tagline">Build a ball. Feel it. Break it. Rebuild it.</p>
       </div>
@@ -452,15 +467,9 @@ function titleHtml(view: View): string {
           ${chip(svg('trophy', 18), `${view.save.stats.wins}`, `${view.save.stats.wins} wins`)}
           ${chip(svg('flag', 18), `${view.save.stats.runs}`, `${view.save.stats.runs} runs`)}
         </div>
-        <p class="muted small kbd-only">${controlsLine(view.save)}</p>
       </div>
     </div>
   </div>`
-}
-
-export function controlsLine(save: SaveData): string {
-  const b = save.settings.bindings
-  return `Roll ${keyName(b.left)}/${keyName(b.right)} or arrows. Hop ${keyName(b.up)}, Up, or Space. Ability ${keyName(b.ability)}, F, or right click. Controller: stick, A hop, B ability, Start pause.`
 }
 
 function settingsHtml(view: View): string {
@@ -485,7 +494,7 @@ function settingsHtml(view: View): string {
   }
   const erase = view.confirmErase
     ? `<div class="confirm-row" role="alertdialog" aria-label="Erase progress">
-        <span class="down">${svg('warning', 18)} Erase all progress and settings? This cannot be undone.</span>
+        <span class="down">${svg('warning', 18)} Erase everything? No undo.</span>
         <div class="row two"><button class="btn" data-act="erase-cancel" data-autofocus>${svg('back', 18)}<span>Keep</span></button><button class="btn danger" data-act="erase-confirm">${svg('trash', 18)}<span>Erase</span></button></div>
       </div>`
     : `<div class="row"><button class="btn danger tiny" data-act="reset-save">${svg('trash', 16)} Erase progress…</button></div>`
@@ -496,14 +505,14 @@ function settingsHtml(view: View): string {
         <h3>${svg('motion', 20)} Motion</h3>
         ${range('screenShake', 'impact', 'Shake', 0, 1, 0.05, s.screenShake)}
         ${range('particles', 'spark', 'Particles', 0, 1, 0.05, s.particles)}
-        ${toggle('cameraMotion', 'Camera motion', s.cameraMotion, 'zoom, look-ahead, animations')}
+        ${toggle('cameraMotion', 'Camera motion', s.cameraMotion)}
         ${toggle('flashes', 'Screen flashes', s.flashes)}
-        ${toggle('hitPause', 'Hit pause', s.hitPause, 'brief freeze on heavy hits')}
+        ${toggle('hitPause', 'Hit pause', s.hitPause)}
       </section>
       <section class="stack">
         <h3>${svg('eye', 20)} Readability</h3>
         ${toggle('highContrast', 'High contrast', s.highContrast)}
-        ${toggle('colorblind', 'Shape markers', s.colorblind, 'letters on constructs, patterns on the ball')}
+        ${toggle('colorblind', 'Shape markers', s.colorblind)}
         ${segment('hudScale', 'info', 'Interface size', [[0.85, 'S'], [1, 'M'], [1.15, 'L'], [1.3, 'XL']], s.hudScale)}
       </section>
       <section class="stack">
@@ -514,19 +523,17 @@ function settingsHtml(view: View): string {
       <section class="stack">
         <h3>${svg('hop', 20)} Touch</h3>
         ${segment('touchSize', 'target', 'Control size', [[0.85, 'S'], [1, 'M'], [1.15, 'L'], [1.3, 'XL']], s.touchSize)}
-        ${toggle('leftHanded', 'Left-handed', s.leftHanded, 'stick on the right, buttons on the left')}
-        ${toggle('haptics', 'Vibration', s.haptics, 'on hits, where the device supports it')}
+        ${toggle('leftHanded', 'Left-handed', s.leftHanded)}
+        ${toggle('haptics', 'Vibration', s.haptics)}
       </section>
       <section class="stack">
         <h3>${svg('assist', 20)} Assists</h3>
         ${segment('gameSpeed', 'gauge', 'Game speed', [[0.7, '70%'], [0.85, '85%'], [1, '100%'], [1.15, '115%']], s.gameSpeed)}
         ${segment('assistDamage', 'shield', 'Damage taken', [[1, '100%'], [0.75, '75%'], [0.5, '50%']], s.assistDamage)}
-        <p class="muted small">Assists are noted on the run summary. They never lock anything.</p>
       </section>
       <section class="stack wide kbd-only">
         <h3>${svg('keyboard', 20)} Keys</h3>
         <div class="bind-grid">${BTNS.map(bind).join('')}</div>
-        <p class="muted small">Arrows, Space, and F always work. Binding a key in use swaps the two. Esc cancels.</p>
         <div class="row"><button class="btn tiny" data-act="reset-keys">${svg('refresh', 16)} Reset keys</button></div>
       </section>
     </div>
@@ -559,9 +566,8 @@ function codexHtml(view: View): string {
       const forge = standard && !unlocked
         ? `<button class="btn tiny forge" data-act="unlock" data-arg="${c.id}" ${short ? 'disabled' : ''} aria-label="Forge for ${c.unlockCost} scrap${short ? `, need ${short} more` : ''}">${svg(short ? 'lock' : 'wrench', 16)}${icon('currency-scrap', 18)}<b>${c.unlockCost}</b></button>`
         : standard ? `<span class="tag ok">${svg('check', 14)} In pool</span>` : `<span class="tag">${c.pool}</span>`
-      return `<article class="codex-card" data-rarity="${c.rarity}">
+      return `<article class="codex-card" data-rarity="${c.rarity}" title="${esc(c.description)}">
         <div class="cc-head">${swatch(c.id, c.slot, 26)}<div><h3>${esc(c.name)}</h3><div class="rarity ${c.rarity}">${SLOT_LABEL[c.slot]} · ${c.rarity}</div></div></div>
-        <p class="desc">${esc(c.description)}</p>
         <p class="up">${svg('up', 12)} ${esc(c.upside)}</p>
         <p class="down">${svg('down', 12)} ${esc(c.downside)}</p>
         <div class="cc-foot">${forge}</div>
@@ -582,11 +588,7 @@ function codexHtml(view: View): string {
         e.shield ? `<span class="tag" title="Frontal rams under ${e.shieldBreak} are blocked; hit from above or behind">${svg('shield', 14)} Front shield</span>` : '',
         ...(e.resists ?? []).map((r) => `<span class="tag ${r.mul < 1 ? 'resist' : 'weak'}">${esc(r.tag)} ×${r.mul}</span>`),
       ].filter(Boolean).join('')
-      const why = [
-        e.armorGate ? `Rams under ${e.armorGate} are cut to ${Math.round((e.armorMul ?? 1) * 100)}%.` : '',
-        e.shield ? `Frontal rams under ${e.shieldBreak} are blocked: hit from above or behind.` : '',
-      ].filter(Boolean).join(' ')
-      return `<article class="codex-card"><div class="cc-head">${svg('target', 28)}<h3>${esc(e.name)}</h3></div><p class="desc">${esc(e.codex)}</p><p class="small muted">${esc(e.question)}</p>${traits ? `<div class="chips">${traits}</div>` : ''}${why ? `<p class="small muted">${esc(why)}</p>` : ''}</article>`
+      return `<article class="codex-card" title="${esc(e.codex)}"><div class="cc-head">${svg('target', 28)}<h3>${esc(e.name)}</h3></div><p class="desc">${esc(e.question)}</p>${traits ? `<div class="chips">${traits}</div>` : ''}</article>`
     }).join('')}</div>`
   } else {
     body = `<div class="grid">${ACHIEVEMENTS.map((a) => {
@@ -667,12 +669,12 @@ function mapHtml(view: View): string {
   const nodes = run.nodes.map((n) => nodeButton(n, build, run, pos.get(n.id)!, n === first, n === picked)).join('')
   const stats = `${chip(svg('heart', 18), `${Math.ceil(run.hp)}/${Math.round(build.stats.maxHp)}`, `Integrity ${Math.ceil(run.hp)} of ${Math.round(build.stats.maxHp)}`, 'hp')}${run.heat ? chip(svg('flame', 18), `${run.heat}`, `Forge heat ${run.heat}`, 'heat') : ''}`
   return `<div class="panel stack scroll route">
-    ${header('Choose a route', build.archetype, { right: `${stats}${currencies(view.save, run)}${iconBtn('menu', 'menu', 'Build and menu')}` })}
+    ${header('Route', '', { right: `${stats}${currencies(view.save, run)}${iconBtn('menu', 'menu', 'Build and menu')}` })}
     <div class="map-scroll"><div class="map" style="width:${width}px;height:${height}px">
       <svg class="edges" width="${width}" height="${height}" aria-hidden="true">${edges}</svg>
       ${nodes}
     </div></div>
-    ${picked ? nodeInfo(picked, build, run) : view.touch ? `<p class="map-hint muted small">${svg('info', 16)} Tap a glowing room to see it. Tap again to go.</p>` : ''}
+    ${picked ? nodeInfo(picked, build, run) : ''}
     <div class="map-legend" aria-hidden="true"><span>${svg('warning', 14)} risk</span><span>${icon('slot-core', 14)} part</span><span>${icon('currency-cinders', 14)} cinders</span><span>${icon('currency-embers', 14)} ember</span></div>
   </div>`
 }
@@ -686,7 +688,6 @@ function nodeInfo(n: MapNode, build: CompiledBuild, run: RunState): string {
       <b>${esc(info.label)}</b>
       <span class="small"><span class="down">${svg('warning', 14)}</span> ${esc(info.risk)}</span>
       <span class="small"><span class="up">${svg('plus', 14)}</span> ${esc(info.reward)}</span>
-      <span class="small muted">${esc(info.advice)}</span>
     </div>
     <button class="btn primary go" data-act="enter" data-arg="${n.id}" data-go="1" aria-label="Enter ${esc(info.label)}">${svg('play', 22)}<span>Go</span></button>
   </div>`
@@ -712,9 +713,8 @@ function rewardHtml(view: View): string {
   const actions = `<button class="btn icon-btn badge-btn" data-act="reroll" ${rerolls > 0 ? '' : 'disabled'} aria-label="Reroll (${rerolls} tokens)" title="Reroll (${rerolls} tokens)">${svg('dice')}<span class="badge">${rerolls}</span></button>
     ${run?.tutorial ? '' : `<button class="btn salvage" data-act="salvage" aria-label="Keep the ball and take ${salvage} cinders" title="Keep the ball: +${salvage} cinders">${svg('recycle', 20)}${icon('currency-cinders', 18)}<b>+${salvage}</b></button>`}`
   return `<div class="panel stack scroll reward">
-    ${header('Choose one', 'Reward', { right: actions })}
+    ${header('Choose one', '', { right: actions })}
     <div class="cards">${view.offers.map((o, i) => offerCard(o, i, view)).join('')}</div>
-    <p class="muted small kbd-only">Keys 1, 2, 3 choose. Faint ball: yours now. Solid ball: with the new part, same input.</p>
   </div>`
 }
 
@@ -742,13 +742,12 @@ function offerCard(o: Offer, i: number, view: View): string {
     ...(o.gained ?? []).map((g) => `<span class="tag up">${svg('link', 14)}${esc(g)}</span>`),
     ...(o.lost ?? []).map((l) => `<span class="tag down">${svg('unlink', 14)}${esc(l)}</span>`),
   ].join('')
-  return `<article class="card kind-${o.kind}" data-rarity="${o.rarity ?? 'common'}" style="--i:${i}">
+  return `<article class="card kind-${o.kind}" data-rarity="${o.rarity ?? 'common'}" style="--i:${i}" title="${esc(o.description)}">
     <div class="card-head">${icon(art, 30)}<div class="rarity ${o.rarity ?? ''}">${o.slot ? SLOT_LABEL[o.slot] : o.kind}${o.rarity ? ` · ${o.rarity}` : ''}</div>${tradeoff ? `<span class="trade" title="Trade-off">${svg('swap', 16)}</span>` : ''}<span class="card-key kbd" aria-hidden="true">${i + 1}</span></div>
     <div class="card-body">
     ${o.kind === 'component' ? `<canvas data-preview="${i}" width="280" height="110" aria-hidden="true"></canvas>` : ''}
     <strong class="card-title">${esc(o.title)}</strong>
     ${o.kind === 'component' ? `<span class="small muted swap-line">${o.replaces ? `${svg('swap', 14)} ${esc(o.replaces.name)}` : `${svg('plus', 14)} Empty slot`}</span>` : ''}
-    <span class="desc">${esc(o.description)}</span>
     ${amount ? `<span class="amount">${amount}</span>` : ''}
     ${o.upside ? `<span class="up">${svg('up', 12)} ${esc(o.upside)}</span>` : ''}
     ${o.downside ? `<span class="down">${svg('down', 12)} ${esc(o.downside)}</span>` : ''}
@@ -757,7 +756,7 @@ function offerCard(o: Offer, i: number, view: View): string {
     ${bars ? `<div class="bars">${bars}</div>` : ''}
     ${numbers}
     </div>
-    <button class="btn primary take" data-act="offer" data-arg="${i}" ${i === 0 ? 'data-autofocus' : ''} aria-label="Take ${esc(o.title)}">${svg('check', 20)}<span>Take</span></button>
+    <button class="btn primary take" data-act="offer" data-arg="${i}" ${i === 0 ? 'data-autofocus' : ''} aria-label="Take ${esc(o.title)}">${svg('check', 22)}</button>
   </article>`
 }
 
@@ -791,12 +790,12 @@ function shopHtml(view: View): string {
     const label = `${item.title}. ${item.sold ? 'Sold.' : `${item.cost} cinders${short ? `, need ${short} more` : ''}.`} ${item.detail}`
     return `<button class="btn shop-item kind-${item.kind} ${item.sold ? 'sold' : ''}" data-rarity="${rarity}" data-act="buy" data-arg="${item.id}" ${item.sold || short ? 'disabled' : ''} aria-label="${esc(label)}">
       <span class="si-icon">${shopIcon(item)}</span>
-      <span class="si-body"><b>${esc(item.title)}</b><span class="small muted">${esc(item.detail)}</span>${chips.length ? `<span class="chips">${chips.join('')}</span>` : ''}</span>
+      <span class="si-body"><b>${esc(item.title)}</b>${item.kind === 'component' ? '' : `<span class="small muted">${esc(item.detail)}</span>`}${chips.length ? `<span class="chips">${chips.join('')}</span>` : ''}</span>
       <span class="price">${item.sold ? svg('check', 18) : `${short ? svg('lock', 14) : ''}${icon('currency-cinders', 18)}<b>${item.cost}</b>`}</span>
     </button>`
   }).join('')
   return `<div class="panel stack scroll shop">
-    ${header('Shop', 'Spend, or leave', { right: currencies(view.save, run) })}
+    ${header('Shop', '', { right: currencies(view.save, run) })}
     <div class="shop-grid">${rows}</div>
     <button class="btn primary leave" data-act="leave-shop" data-autofocus>${svg('exit', 20)}<span>Leave</span></button>
   </div>`
@@ -813,7 +812,7 @@ function eventHtml(view: View): string {
     return out.join('')
   }
   return `<div class="panel stack scroll narrow event">
-    ${header(ev.title, 'Event', { right: currencies(view.save, view.run) })}
+    ${header(ev.title, '', { right: currencies(view.save, view.run) })}
     <p class="event-body">${esc(ev.body)}</p>
     <div class="stack">${ev.choices.map((c, i) => `<button class="btn event-choice" data-act="event" data-arg="${c.id}" ${c.disabled ? 'disabled' : ''} ${i === 0 && !c.disabled ? 'data-autofocus' : ''}>
       <span class="ec-head"><b>${esc(c.title)}</b>${cost(c)}</span>
@@ -869,10 +868,9 @@ function summaryHtml(view: View): string {
         ${tile('title', 'home', 'Title')}
       </div>
     </div>
-    <p class="tip">${esc(s.tip)}</p>
-    <p class="idea">${svg('spark', 18)} ${esc(s.idea)}</p>
-    <p class="muted foreman small">“${esc(s.line)}” — Foreman</p>
     <div class="reward-line">${chip(icon('currency-scrap', 22), `+${s.scrap}`, `${s.scrap} scrap earned`, 'cur scrap big')}${currencies(view.save, null)}</div>
+    <p class="idea" title="${esc(s.line)}">${svg('spark', 18)} ${esc(s.kind === 'death' ? s.tip : s.idea)}</p>
+    <details class="run-details"><summary>${svg('info', 16)} Run</summary>
     <div class="summary-grid">
       <section><h3>${svg('wrench', 18)} ${esc(s.archetype)}</h3><ul class="plain parts">${s.components.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
         ${s.decisions.length ? `<p class="muted small">${s.decisions.map(esc).join(' · ')}</p>` : ''}</section>
@@ -880,7 +878,8 @@ function summaryHtml(view: View): string {
       <section><h3>${svg('heart', 18)} Taken</h3>${bars(s.taken)}</section>
       <section><h3>${svg('impact', 18)} Dealt</h3>${bars(s.dealt)}</section>
     </div>
-    <p class="muted small">${svg('hash', 14)} ${s.seed} · ${svg('flame', 14)} ${s.heat}${s.assist ? ` · ${svg('assist', 14)} assists` : ''}</p>
+    <p class="muted small">${svg('hash', 14)} ${s.seed} · ${svg('flame', 14)} ${s.heat}${s.assist ? ` · ${svg('assist', 14)}` : ''}</p>
+    </details>
   </div>`
 }
 

@@ -1240,7 +1240,6 @@ export class Simulation implements EffectApi {
       this.exitOpen = true
       this.burst(boss.x, boss.y, 24, '#ffb15a', 300)
       this.emit({ type: 'boss-down', x: boss.x, y: boss.y })
-      this.listeners.onToast?.('The Colossus breaks. The gate is open.')
       this.listeners.onFlash?.(0.6)
       this.dropLoot(boss.x, boss.y - 40, 20)
     }
@@ -1256,7 +1255,6 @@ export class Simulation implements EffectApi {
         this.burst(r.x, r.y, 6, '#ffd29a', 160)
       }
     }
-    this.listeners.onToast?.(phase === 2 ? 'Armor splits. The heart is open.' : 'The Colossus stamps. The middle floor is cracking.')
     this.listeners.onBossPhase?.(phase)
     this.emit({ type: 'boss-phase', x: boss.x, y: boss.y, phase })
     this.listeners.onShake?.(10)

@@ -61,7 +61,7 @@ import { TUNE } from './tune'
 import type { HitSource, RoomTemplate, Slot } from './types'
 import { SLOTS } from './types'
 import { damageLabel, HIT_LABEL, Hud, presetIds, screenHtml, type RunSummary, type Screen, type View } from './ui'
-import { hypot } from './util'
+import { escapeHtml, hypot } from './util'
 import { svg, type IconName } from './icons'
 import { attachTouchControls } from './touch'
 
@@ -108,7 +108,7 @@ export class Game {
   saveWarning = ''
   private stepper = new FixedStepper(TUNE.fixedDt, MAX_STEPS)
   private previews: CardPreview[] = []
-  private toasts: { text: string; life: number; kind: string; count: number }[] = []
+  private toasts: { text: string; life: number; kind: string; ico: IconName | null; count: number }[] = []
   private usesAtBoss = 0
   private lab = false
   private abilityWasReady = true
@@ -272,20 +272,18 @@ export class Game {
   private tutorialPrompt(): string {
     if (!this.run?.tutorial || !this.sim) return ''
     const b = this.save.settings.bindings
-    const keys = `${b.left.replace('Key', '')} / ${b.right.replace('Key', '')}`
+    const key = (code: string) => code.replace(/^Key/, '').replace(/Left$|Right$/, '')
     const touch = this.input.touchMode
+    // A few words at most: the gate banner and the speed ring say the rest.
+    if (this.sim.exitOpen) return ''
     if (this.run.tutorialStep === 0) {
-      if (this.sim.exitOpen) return 'Gate open. Roll into the frame on the right.'
-      if (this.sim.kills === 0 && this.sim.dealt.collision > 0) return 'Just a bump. Back off, build speed, hit again: past the notch on the ring is a clean ram.'
+      if (this.sim.kills === 0 && this.sim.dealt.collision > 0) return 'Faster. Past the notch.'
       if (hypot(this.sim.ball.vx, this.sim.ball.vy) < 120) {
-        return touch
-          ? 'Drag on the left to roll. Tap the arrow to hop, hold it to float. The dial dashes.'
-          : `${keys} or arrows roll. Space hops. Hold hop in the air to float. ${b.ability.replace('Left', '')} dashes.`
+        return touch ? 'Drag to roll · ↑ hop' : `${key(b.left)} ${key(b.right)} roll · Space hop · ${key(b.ability)} dash`
       }
-      return 'Speed is the weapon. Past the notch on the ring, a ram is clean and costs nothing.'
+      return 'Speed is damage'
     }
-    if (this.sim.exitOpen) return 'Same gate. Notice how the new core hops, turns, and hits.'
-    return 'The floor is safe. The stairs are optional. Feel the difference in how you start, stop, and land.'
+    return 'Feel the new core'
   }
 
   // -------------------------------------------------------------------------
@@ -588,7 +586,7 @@ export class Game {
     if (!ids) return
     this.run.ids = { ...ids }
     this.sim.syncBuild(currentBuild(this.run))
-    this.toast(`${name} build fitted.`)
+    this.toast(name, 'wrench')
     this.refresh()
   }
 
@@ -660,7 +658,7 @@ export class Game {
     this.iris = 0
     this.hitstop = 0
     this.gateWasOpen = this.sim.exitOpen
-    if (template.type === 'boss') this.hud.banner('Iron Colossus', 'Crack the rivets. Then the heart.', 'boss', artUrl('colossus'))
+    if (template.type === 'boss') this.hud.banner('Iron Colossus', '', 'boss', artUrl('colossus'))
     else this.hud.banner(template.name, template.objective, 'room')
     this.screen = 'play'
     this.say(`${template.name}. ${template.objective}`)
@@ -692,7 +690,7 @@ export class Game {
         this.audio.bossPhase(phase)
         this.buzz([60, 40, 90])
         this.flash = Math.max(this.flash, 0.25)
-        this.hud.banner(phase === 2 ? 'The heart is open' : 'The floor is failing', phase === 2 ? 'Ram the molten core.' : 'Get off the middle floor.', 'phase')
+        this.hud.banner(phase === 2 ? 'Heart open' : 'Floor failing', '', 'phase')
         this.say(phase === 2 ? 'Colossus phase two. The heart is open.' : 'Colossus phase three. The middle floor is about to collapse.')
       },
       onAbility: (kind) => {
@@ -762,7 +760,7 @@ export class Game {
   private onGateOpen(sim: Simulation): void {
     if (sim.room.type !== 'boss') this.juice.slowMo(0.5, 0.35)
     this.audio.clear()
-    this.hud.banner('Gate open', sim.room.type === 'boss' ? 'The Colossus is scrap. Roll out.' : 'Roll into the frame.', 'clear')
+    this.hud.banner('Gate open', '', 'clear')
     this.flash = Math.max(this.flash, 0.12)
   }
 
@@ -802,7 +800,6 @@ export class Game {
     const run = this.run!
     this.grant(bumpAchievement(this.save, 'ignition', 1, 'set'))
     if (commit.type === 'elite' && commit.roomDamage <= 0) this.grant(bumpAchievement(this.save, 'unmarked', 1, 'set'))
-    if (commit.cinders > 0) this.toast(`+${commit.cinders} cinders collected.`)
     if (run.tutorial && run.tutorialStep === 0) {
       this.showOffers('combat')
       return
@@ -812,7 +809,6 @@ export class Game {
       run.roomsCleared++
       run.nodes = generateMap(run.rng)
       this.save.seenTutorial = true
-      this.toast('The foundry opens. Pick a route.')
       this.persist()
       this.toMap()
       return
@@ -889,7 +885,7 @@ export class Game {
     this.save.stats.wins++
     if (run.heat >= this.save.heatUnlocked && this.save.heatUnlocked < 3) {
       this.save.heatUnlocked++
-      this.toast(`Forge Heat ${this.save.heatUnlocked} unlocked`)
+      this.toast(`Heat ${this.save.heatUnlocked}`, 'flame', 'ember')
     }
     if (!run.commonBroken) this.grant(bumpAchievement(this.save, 'common-stock', 1, 'set'))
     if ((build.tags.fire ?? 0) >= 3) this.grant(bumpAchievement(this.save, 'three-flames', 1, 'set'))
@@ -917,7 +913,7 @@ export class Game {
     this.offers = []
     try {
       const result = takeOffer(run, this.save, offer)
-      if (result.text) this.toast(result.text)
+      if (result.text) this.toast(result.text, offer.kind === 'component' ? 'wrench' : offer.kind === 'heal' ? 'heart' : offer.kind === 'reroll' ? 'dice' : undefined)
     } catch (err) {
       if (!(err instanceof TransactionError)) throw err
       this.toast(err.message)
@@ -955,7 +951,7 @@ export class Game {
       const result = buyItem(run, this.save, item)
       if (!result) return
       this.audio.ui('buy')
-      this.toast(result.text)
+      this.toast(result.text, item.kind === 'component' ? 'wrench' : item.kind === 'heal' ? 'heart' : item.kind === 'reroll' ? 'dice' : undefined)
     } catch (err) {
       if (!(err instanceof TransactionError)) throw err
       this.toast(err.message)
@@ -976,7 +972,7 @@ export class Game {
       return
     }
     this.event = null
-    if (result.text) this.toast(result.text)
+    if (result.text) this.toast(result.text, result.report ? 'wrench' : undefined)
     this.leaveNode()
   }
 
@@ -985,7 +981,7 @@ export class Game {
     const run = this.run
     if (!run) return
     const done = finishNode(run, this.save)
-    if (done?.ember) this.toast('The elite leaves an ember. Embers keep between runs.')
+    if (done?.ember) this.toast('+1 ember')
     this.persist()
     this.toMap()
   }
@@ -1011,7 +1007,7 @@ export class Game {
     this.save.unlocked.push(id)
     this.discoverComponent(id)
     this.audio.ui('buy')
-    this.toast(`Schematic forged: ${comp.name}`)
+    this.toast(comp.name, 'wrench')
     this.persist()
     this.refresh()
   }
@@ -1059,7 +1055,7 @@ export class Game {
   private meetEnemy(id: string): void {
     if (this.save.discoveredEnemies.includes(id)) return
     this.save.discoveredEnemies.push(id)
-    this.toast(`New construct in the codex.`)
+    this.toast('New', 'target')
   }
 
   private onDiscovery(id: string): void {
@@ -1067,15 +1063,15 @@ export class Game {
     if (!syn || this.save.discoveredSynergies.includes(id)) return
     this.save.discoveredSynergies.push(id)
     this.audio.ui('discover')
-    this.toast(`Discovery — ${syn.name}. ${syn.description}`)
+    this.toast(syn.name, 'link', 'epic')
     this.say(`Discovery. ${syn.name}.`)
     this.grant(bumpAchievement(this.save, 'scholar', this.save.discoveredSynergies.length, 'max'))
     this.persist()
   }
 
   private grant(grants: { text: string }[]): void {
-    // One achievement is one toast: its rewards ride along.
-    if (grants.length) this.toast(grants.map((g) => g.text).join(' · '))
+    // One achievement is one toast: its rewards ride along as icons.
+    if (grants.length) this.toast(grants.map((g) => g.text.replace(/^(Achievement|Schematic forged): /, '')).join(' '), 'trophy', 'gold')
     if (grants.length) this.persist()
   }
 
@@ -1160,13 +1156,14 @@ export class Game {
   // -------------------------------------------------------------------------
   // DOM.
 
-  private toast(text: string): void {
+  /** A short pickup-style note: an icon and a few words. Currency amounts render as their icons. */
+  private toast(text: string, ico?: IconName, kind?: string): void {
     const same = this.toasts.find((t) => t.text === text)
     if (same) {
       same.count++
       same.life = 3.2
     } else {
-      this.toasts.push({ text, life: 3.2, kind: toastKind(text), count: 1 })
+      this.toasts.push({ text, life: 3.2, kind: kind ?? (ico === 'wrench' || ico === 'heart' ? 'part' : toastKind(text)), ico: ico ?? null, count: 1 })
       if (this.toasts.length > 4) this.toasts.shift()
     }
     this.renderToasts()
@@ -1207,7 +1204,7 @@ export class Game {
       const div = existing.get(key) ?? document.createElement('div')
       div.className = `toast ${t.kind}`
       div.dataset.key = key
-      div.textContent = t.count > 1 ? `${t.text}  ×${t.count}` : t.text
+      div.innerHTML = `${t.ico ? svg(t.ico, 18) : ''}<span>${toastHtml(t.text)}</span>${t.count > 1 ? `<b>×${t.count}</b>` : ''}`
       return div
     }))
   }
@@ -1309,13 +1306,18 @@ function focusKeyOf(el: HTMLElement): string | null {
 }
 
 function toastKind(text: string): string {
-  if (text.startsWith('Achievement')) return 'gold'
-  if (text.startsWith('Discovery')) return 'epic'
-  if (/^\+\d+ cinders/.test(text) || /cinders collected/.test(text)) return 'cinder'
+  if (/^\+\d+ cinders/.test(text)) return 'cinder'
   if (/scrap/.test(text)) return 'scrap'
   if (/ember/.test(text)) return 'ember'
-  if (/fitted|forged|Welded/.test(text)) return 'part'
   return 'info'
+}
+
+const CURRENCY_ICON: Record<string, string> = { cinder: 'currency-cinders', scrap: 'currency-scrap', ember: 'currency-embers' }
+
+/** "+10 scrap" becomes "+10" and the scrap icon. */
+function toastHtml(text: string): string {
+  return escapeHtml(text).replace(/([+−-]?\d+) (cinders?|scrap|embers?)\b/g, (_, n: string, word: string) =>
+    `${n}<img class="ico" src="art/foundry-v1/icons/${CURRENCY_ICON[word.replace(/s$/, '')]}.svg" alt="${word}" width="18" height="18" />`)
 }
 
 function isTyping(): boolean {

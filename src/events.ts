@@ -196,7 +196,7 @@ export function applyEventChoice(run: RunState, save: SaveData, event: GameEvent
     switch (o.kind) {
       case 'cinders':
         run.cinders += o.amount
-        texts.push(`+${o.amount} cinders.`)
+        texts.push(`+${o.amount} cinders`)
         break
       case 'heal-full':
         run.hp = currentBuild(run).stats.maxHp

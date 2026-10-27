@@ -23,7 +23,7 @@
       <div id="hud" hidden>
         <header class="hud-top">
           <div class="meter integrity" id="hp-meter" role="group" aria-label="Integrity">
-            <div class="meter-label"><span class="meter-name"><i data-icon="heart"></i><b id="hp-warn" class="warn-tag"></b></span><span id="hp-num" class="meter-num"></span></div>
+            <div class="meter-label"><span class="meter-name"><i data-icon="heart"></i></span><span id="hp-num" class="meter-num"></span></div>
             <div class="track hp-track"><div id="hp-chip" class="chip"></div><div id="hp-bar"></div><div id="shield-bar"></div></div>
           </div>
           <div class="objective">
@@ -43,7 +43,7 @@
           <div class="boss-name"><span>Iron Colossus</span><b id="boss-phase"></b></div>
           <div class="track boss-track"><div id="boss-chip" class="chip"></div><div id="boss-fill"></div><i style="left:34%"></i><i style="left:66%"></i></div>
         </div>
-        <div id="combo" class="combo" hidden aria-hidden="true"><b id="combo-num"></b><span>combo</span><div class="combo-timer"><div id="combo-timer"></div></div></div>
+        <div id="combo" class="combo" hidden aria-hidden="true"><b id="combo-num"></b><div class="combo-timer"><div id="combo-timer"></div></div></div>
         <div id="banner" class="banner" aria-hidden="true"></div>
         <div id="prompt" class="prompt" hidden></div>
         <div class="rotate-hint" aria-hidden="true"><i data-icon="rotate"></i></div>
@@ -52,13 +52,12 @@
           <div id="ability-readout" class="ability-readout">
             <button class="dial" id="ability-dial" data-touch="ability" tabindex="-1" aria-label="Ability"><img src="art/foundry-v1/icons/slot-ability.svg" alt="" width="26" height="26" /><span id="ability-key" class="key kbd"></span></button>
             <div class="ability-info">
-              <div class="ability-head"><span id="ability-name">Ability</span><b id="ability-state"></b></div>
+              <b id="ability-state"></b>
               <div class="track slim energy"><div id="energy-bar"></div></div>
-              <div id="energy-num" class="small"></div>
             </div>
           </div>
           <div class="readouts">
-            <div class="speed-meter" id="speed-meter"><i data-icon="gauge"></i><div class="track speed-track"><div id="speed-bar"></div><i class="notch"></i></div><span id="speed-read"></span></div>
+            <div class="speed-meter" id="speed-meter"><i data-icon="gauge"></i><div class="track speed-track"><div id="speed-bar"></div><i class="notch"></i></div></div>
             <span id="instability-read"></span>
           </div>
           <button class="hop-btn" data-touch="hop" tabindex="-1" aria-label="Hop"><i data-icon="hop"></i></button>
