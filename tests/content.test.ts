@@ -38,6 +38,40 @@ describe('content contracts', () => {
     }
   })
 
+  it('heat and Molten Bath geysers stack and every one sits on solid floor', () => {
+    for (const room of ROOMS.filter((r) => r.type === 'combat' || r.type === 'elite')) {
+      const plain = sim(room, build('balanced'), { heat: 2 })
+      const cursed = sim(room, build('balanced'), { heat: 2, curse: true })
+      const count = (s: ReturnType<typeof sim>) => s.room.hazards.filter((h) => h.type === 'geyser').length
+      expect(count(cursed), room.id).toBe(count(plain) + 2)
+      for (const h of cursed.room.hazards.filter((g) => g.type === 'geyser')) {
+        const cx = h.x + h.w / 2
+        const floor = cursed.solids.some((p) => p.x <= cx && p.x + p.w >= cx && p.y >= h.y && p.y <= h.y + h.h + 30)
+        const pit = cursed.room.hazards.some((l) => l.type === 'lava' && l.x <= cx && l.x + l.w >= cx)
+        expect(floor && !pit, `${room.id}: geyser at ${Math.round(cx)}`).toBe(true)
+      }
+    }
+    // The bath does not touch rooms it is not meant for.
+    const boss = ROOMS.find((r) => r.type === 'boss')!
+    expect(sim(boss, build('balanced'), { curse: true }).room.hazards.filter((h) => h.type === 'geyser').length).toBe(0)
+  })
+
+  it('no room has a bottomless gap in its floor, and every stamp reaches the floor under it', () => {
+    for (const room of ROOMS) {
+      const floors = room.platforms.filter((p) => p.y >= 560 && !p.move)
+      for (let x = 0; x <= room.width; x += 8) {
+        const solid = floors.some((p) => p.x <= x && p.x + p.w >= x)
+        const slag = room.hazards.some((h) => h.type === 'lava' && h.x <= x && h.x + h.w >= x)
+        expect(solid || slag, `${room.id}: open pit at x=${x}`).toBe(true)
+      }
+      for (const h of room.hazards.filter((c) => c.type === 'crusher')) {
+        const under = floors.filter((p) => p.x < h.x + h.w && p.x + p.w > h.x)
+        const top = Math.min(...under.map((p) => p.y))
+        expect(h.y + (h.drop ?? 220) + h.h, `${room.id}: stamp at ${h.x}`).toBeGreaterThanOrEqual(top - 2)
+      }
+    }
+  })
+
   it('rooms with mobility requirements are only offered to builds that meet them', () => {
     const heavy = build({ ...BUILDS.heavy!, ability: 'ground-slam' })
     for (const room of ROOMS.filter((r) => r.requires)) {

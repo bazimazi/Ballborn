@@ -52,7 +52,7 @@ function describeOutcome(run: RunState, o: Outcome): string {
       return mod ? `${mod.name}: ${mod.description}` : ''
     }
     case 'curse-next':
-      return 'The next combat room gains two slag geysers.'
+      return 'The next combat or elite room gains two extra slag geysers.'
     case 'equip': {
       const comp = COMPONENT_MAP[o.componentId]!
       const old = run.ids[comp.slot] ? COMPONENT_MAP[run.ids[comp.slot]!] : null
@@ -92,6 +92,24 @@ function annealCost(run: RunState, save: SaveData): { cost?: Cost; disabled?: st
   return { cost: { embers: 1 }, disabled: 'Needs an ember. The free anneal is spent.' }
 }
 
+/** Whether a combat or elite room can still be entered after the current node (the bath's cost needs one). */
+function fightAhead(run: RunState): boolean {
+  const byId = new Map(run.nodes.map((n) => [n.id, n]))
+  const start = run.currentId ? byId.get(run.currentId) : undefined
+  const queue = start ? [...start.next] : run.nodes.filter((n) => n.state === 'open').map((n) => n.id)
+  const seen = new Set<string>()
+  while (queue.length) {
+    const id = queue.shift()!
+    if (seen.has(id)) continue
+    seen.add(id)
+    const node = byId.get(id)
+    if (!node) continue
+    if (node.type === 'combat' || node.type === 'elite') return true
+    queue.push(...node.next)
+  }
+  return false
+}
+
 /** Every event the run could offer now, with outcomes resolved in advance. */
 export function eventCandidates(run: RunState, save: SaveData): GameEvent[] {
   const seen = new Set(run.eventsSeen)
@@ -120,7 +138,7 @@ export function eventCandidates(run: RunState, save: SaveData): GameEvent[] {
       ],
     })
   }
-  if (!seen.has('molten-bath')) {
+  if (!seen.has('molten-bath') && fightAhead(run)) {
     options.push({
       id: 'molten-bath',
       title: 'Molten Bath',

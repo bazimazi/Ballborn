@@ -133,6 +133,8 @@ export class Input {
   private keydown(e: KeyboardEvent): void {
     if (this.rebinding) {
       e.preventDefault()
+      // The key belongs to the rebind alone: Esc cancelling it must not also leave the menu.
+      e.stopImmediatePropagation?.()
       const btn = this.rebinding
       this.rebinding = null
       // Escape cancels a rebind (unless the pause key itself is being bound).
@@ -143,8 +145,17 @@ export class Input {
       this.onRebound?.(btn, e.code)
       return
     }
-    if (this.context === 'play' && Input.PLAY_KEYS.includes(e.code)) e.preventDefault()
-    if (e.repeat) return
+    // During play the browser acts on none of the game's keys (scrolling, quick find, focus moves).
+    if (this.context === 'play' && (Input.PLAY_KEYS.includes(e.code) || Object.values(this.bindings).includes(e.code))) e.preventDefault()
+    if (e.repeat) {
+      const t = e.target as HTMLElement | null
+      const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') && (t as HTMLInputElement).type !== 'checkbox' && (t as HTMLInputElement).type !== 'range'
+      // A key held through a screen change must not press the button that just took focus.
+      if (this.context === 'menu' && !typing) e.preventDefault()
+      // A direction still held after a menu closes keeps working, without a fresh press edge.
+      else if (this.context === 'play') this.keys.add(e.code)
+      return
+    }
     this.setTouchMode(false)
     if (!this.keys.has(e.code)) {
       this.edges.add(e.code)
@@ -168,6 +179,11 @@ export class Input {
   private pressed(btn: Btn): boolean {
     if (this.edges.has(this.bindings[btn])) return true
     return ALT_KEYS[btn].some((k) => this.edges.has(k))
+  }
+
+  /** Drop one key's press edge (a menu already acted on it). */
+  consumeKey(code: string): void {
+    this.edges.delete(code)
   }
 
   /** Forget everything held or pressed: focus loss, pausing, and screen changes. */

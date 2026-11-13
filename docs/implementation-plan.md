@@ -75,6 +75,15 @@ Related contract audit, all fixed: `onDamaged` now dispatched; `pickup` attracti
 - CI: typecheck, tests, build, and the browser smoke test (`.github/workflows/ci.yml`).
 - Canvas and audio initialization failures are handled.
 
+## Review pass (in play) - done
+
+A play-through in the browser plus a code review of the simulation, run, and front end. Regression cases are in `tests/review.test.ts` and `tests/content.test.ts`.
+
+- **Defects, gameplay:** Colossus Hold had a bottomless pit (x 1340–1460) right before the boss; it is slag now, and a test checks every room for open pits. Stamps stopped 64 px above the floor and could never hit a rolling ball; they now land on it. Two Colossus rivets sat inside the plate where no ram could reach them; all three are on the rim facing the entrance. A slow touch on a rivet glued the ball to it (about 14 integrity per second). A stunned turret sank through its mount until it was unreachable. Ground Slam from the floor did a full shockwave. Combo milestones paid out on every hit once the combo was capped, and a killing ram counted twice. A dash deleted shots instead of turning them around as the room and codex text say. A released ball crept forever. The air-turn assist only worked at full stick deflection. Splitter shards and Colossus sparks ignored depth and heat scaling. An expired burn kept its old strength.
+- **Defects, run:** treasure rooms never offered the weld. The Molten Bath curse was wasted on the boss or on rooms it does not apply to, did not stack with Heat II geysers, and could be offered when no fight was left. A reload at a reward screen reset the reward table (salvage paid 8 instead of 14 after an elite). The two tutorial rooms made the first real room scale as depth 2. The tutorial's damage carried into the run (a run could start at 13 of 84). Lab discoveries were written to the save. Heat descriptions left out applied modifiers; some route texts overpromised. Geysers could be placed in a pit under a bridge.
+- **Defects, interface:** a key held through a screen change pressed the newly focused button (Space took a reward card or relaunched a run past the death summary; a held Esc paused and resumed at once). Esc cancelling a rebind also left Settings; a rebind stayed armed after leaving Settings; binding to Space, an arrow, or F silently double-bound it. The pause key and controller Start did not resume from the pause menu. The HUD always said Tab and Esc. Focus dropped to the page after a purchase or the last reroll. "Same seed" stuck to every later run. The build sheet ignored run modifiers. One-frame audio and HUD cues could repeat every frame while paused. Map labels were clipped at L and XL. The lab strip ran off-screen at 800×600. Controller A did nothing in the build sheet. The discovery toast said only "New".
+- **Not changed:** replaying the tutorial while a run is saved still replaces that run without asking (the "New run" button does the same and says so); toasts can briefly cover a menu header.
+
 ## Deferred, in priority order
 
 1. Human playtests with about five new players (protocol in `validation-report.md`).

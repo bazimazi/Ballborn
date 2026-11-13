@@ -94,6 +94,7 @@ export function damageLabel(source: string): string {
 
 export class Hud {
   private els = new Map<string, HTMLElement>()
+  private sheetBuild: CompiledBuild | null = null
   private last = new Map<string, string>()
 
   private el(id: string): HTMLElement {
@@ -270,9 +271,9 @@ export class Hud {
     this.text('prompt', prompt)
     const sheet = this.el('sheet')
     if (sheet.hidden !== !buildOpen) sheet.hidden = !buildOpen
-    const key = buildOpen ? `${SLOTS.map((s) => build.ids[s]).join(',')}|${build.archetype}` : ''
-    if (buildOpen && this.last.get('sheet') !== key) {
-      this.last.set('sheet', key)
+    // Compiled builds are cached per loadout and run modifiers, so the object itself says when the sheet is stale.
+    if (buildOpen && this.sheetBuild !== build) {
+      this.sheetBuild = build
       sheet.innerHTML = sheetHtml(build)
     }
   }
@@ -642,15 +643,19 @@ function mapHtml(view: View): string {
   const run = view.run
   const build = view.build
   if (!run || !build) return ''
+  // Nodes grow with the interface size so their labels still fit at L and XL.
+  const k = Math.max(1, view.save.settings.hudScale)
+  const NW = Math.round(NODE_W * k)
+  const NH = Math.round(NODE_H * k)
   const depth = Math.max(...run.nodes.map((n) => n.depth))
   const maxRows = Math.max(...Array.from({ length: depth + 1 }, (_, d) => run.nodes.filter((n) => n.depth === d).length))
-  const height = maxRows * NODE_H + (maxRows - 1) * ROW_GAP
-  const width = (depth + 1) * NODE_W + depth * COL_GAP
+  const height = maxRows * NH + (maxRows - 1) * ROW_GAP
+  const width = (depth + 1) * NW + depth * COL_GAP
   const pos = new Map<string, { x: number; y: number }>()
   for (let d = 0; d <= depth; d++) {
     const col = run.nodes.filter((n) => n.depth === d)
-    const colH = col.length * NODE_H + (col.length - 1) * ROW_GAP
-    col.forEach((n, i) => pos.set(n.id, { x: d * (NODE_W + COL_GAP), y: (height - colH) / 2 + i * (NODE_H + ROW_GAP) }))
+    const colH = col.length * NH + (col.length - 1) * ROW_GAP
+    col.forEach((n, i) => pos.set(n.id, { x: d * (NW + COL_GAP), y: (height - colH) / 2 + i * (NH + ROW_GAP) }))
   }
   const onPath = new Set(run.nodes.filter((n) => n.state === 'done' || n.state === 'active').map((n) => n.id))
   let edges = ''
@@ -661,12 +666,12 @@ function mapHtml(view: View): string {
       const b = pos.get(id)
       if (!m || !b) continue
       const cls = onPath.has(n.id) && onPath.has(id) ? 'taken' : n.state === 'done' && m.state === 'open' ? 'reachable' : n.state === 'missed' || m.state === 'missed' ? 'missed' : 'future'
-      edges += `<line class="${cls}" x1="${a.x + NODE_W}" y1="${a.y + NODE_H / 2}" x2="${b.x}" y2="${b.y + NODE_H / 2}" />`
+      edges += `<line class="${cls}" x1="${a.x + NW}" y1="${a.y + NH / 2}" x2="${b.x}" y2="${b.y + NH / 2}" />`
     }
   }
   const picked = run.nodes.find((n) => n.id === view.selectedNode && n.state === 'open')
   const first = picked ?? run.nodes.find((n) => n.state === 'open')
-  const nodes = run.nodes.map((n) => nodeButton(n, build, run, pos.get(n.id)!, n === first, n === picked)).join('')
+  const nodes = run.nodes.map((n) => nodeButton(n, build, run, pos.get(n.id)!, n === first, n === picked, NW, NH)).join('')
   const stats = `${chip(svg('heart', 18), `${Math.ceil(run.hp)}/${Math.round(build.stats.maxHp)}`, `Integrity ${Math.ceil(run.hp)} of ${Math.round(build.stats.maxHp)}`, 'hp')}${run.heat ? chip(svg('flame', 18), `${run.heat}`, `Forge heat ${run.heat}`, 'heat') : ''}`
   return `<div class="panel stack scroll route">
     ${header('Route', '', { right: `${stats}${currencies(view.save, run)}${iconBtn('menu', 'menu', 'Build and menu')}` })}
@@ -693,7 +698,7 @@ function nodeInfo(n: MapNode, build: CompiledBuild, run: RunState): string {
   </div>`
 }
 
-function nodeButton(n: MapNode, build: CompiledBuild, run: RunState, p: { x: number; y: number }, focus: boolean, selected: boolean): string {
+function nodeButton(n: MapNode, build: CompiledBuild, run: RunState, p: { x: number; y: number }, focus: boolean, selected: boolean, w = NODE_W, h = NODE_H): string {
   const info = routeInfo(n.type, build, run)
   const state = n.state === 'open' ? 'Available' : n.state === 'done' ? 'Cleared' : n.state === 'active' ? 'Here' : n.state === 'missed' ? 'Passed by' : 'Later'
   const risk = riskLevel(info.risk)
@@ -701,7 +706,7 @@ function nodeButton(n: MapNode, build: CompiledBuild, run: RunState, p: { x: num
     ? `<span class="node-meta"><span class="risk" data-level="${risk}" aria-hidden="true"><i></i><i></i><i></i></span><span class="pays">${NODE_REWARD[n.type].map((r) => icon(r, 16)).join('')}${n.type === 'boss' ? svg('trophy', 16) : n.type === 'event' ? svg('question', 16) : ''}</span></span>`
     : n.state === 'done' ? `<span class="node-state">${svg('check', 16)}</span>` : n.state === 'missed' ? `<span class="node-state">${svg('close', 14)}</span>` : ''
   const here = run.currentId === n.id && (n.state === 'done' || n.state === 'active')
-  return `<button class="btn node ${n.state} type-${n.type}${here ? ' here' : ''}${selected ? ' selected' : ''}" style="left:${p.x}px;top:${p.y}px;width:${NODE_W}px;height:${NODE_H}px;--d:${n.depth}" data-act="enter" data-arg="${n.id}" ${n.state === 'open' ? '' : 'disabled'} ${focus ? 'data-autofocus' : ''} title="${esc(`${info.label}. Risk: ${info.risk} Reward: ${info.reward} ${info.advice}`)}" aria-label="${esc(`${info.label}. ${state}. ${n.state === 'open' ? `Risk: ${info.risk} Reward: ${info.reward} ${info.advice}` : ''}`)}">
+  return `<button class="btn node ${n.state} type-${n.type}${here ? ' here' : ''}${selected ? ' selected' : ''}" style="left:${p.x}px;top:${p.y}px;width:${w}px;height:${h}px;--d:${n.depth}" data-act="enter" data-arg="${n.id}" ${n.state === 'open' ? '' : 'disabled'} ${focus ? 'data-autofocus' : ''} title="${esc(`${info.label}. Risk: ${info.risk} Reward: ${info.reward} ${info.advice}`)}" aria-label="${esc(`${info.label}. ${state}. ${n.state === 'open' ? `Risk: ${info.risk} Reward: ${info.reward} ${info.advice}` : ''}`)}">
     <span class="node-head"><span class="glyph" aria-hidden="true">${svg(NODE_ICON[n.type] ?? 'star', 18)}</span><b>${esc(info.label)}</b></span>${meta}
   </button>`
 }

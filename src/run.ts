@@ -305,7 +305,7 @@ export function routeInfo(type: RoomType, build: CompiledBuild, run: RunState): 
       return {
         label: 'Elite',
         risk: low ? 'High, and you are cracked.' : 'High. Armored constructs.',
-        reward: 'Rare-leaning part, 28 cinders, and an ember.',
+        reward: 'Rare-leaning part or supplies, plus an ember.',
         advice: s.mass * s.impact > 1.7 ? 'Your collisions can crack an elite.' : 'Elites are armored. Fire or a heavier impact will suffer less.',
       }
     case 'challenge':
@@ -325,7 +325,7 @@ export function routeInfo(type: RoomType, build: CompiledBuild, run: RunState): 
         advice: low ? 'A patch here is cheaper than a death.' : 'Spend before the Colossus, or save it and regret it.',
       }
     case 'treasure':
-      return { label: 'Treasure', risk: 'None.', reward: 'Free pick: a part, 36 cinders, or a large weld.', advice: low ? 'The weld is here if you need it.' : 'A free choice. Good when the build is bored.' }
+      return { label: 'Treasure', risk: 'None.', reward: 'Free pick: a part, 36 cinders (or an ember), or a large weld.', advice: low ? 'The weld is here if you need it.' : 'A free choice. Good when the build is bored.' }
     case 'event':
       return { label: 'Event', risk: 'Your call. Costs are shown before you pay.', reward: 'A bargain, or cinders to walk away.', advice: 'The foundry offers a bargain. Read the cost.' }
     case 'boss':
@@ -381,12 +381,14 @@ export function makeOffers(run: RunState, save: SaveData, kind: OfferKind): Offe
   }
   const maxHp = currentBuild(run).stats.maxHp
   if (kind === 'treasure') {
-    offers.push({ kind: 'cinders', title: 'Cinder cache', description: 'A pouch of run currency.', hints: [], amount: 36 })
-    offers.push({ kind: 'heal', title: 'Weld', description: 'Restore a large share of integrity.', hints: [], amount: Math.round(maxHp * 0.5) })
-    if (save.embers < 3 && run.rng() < 0.5) {
-      offers[2] = { kind: 'ember', title: 'Ember', description: 'A rare coal that keeps between runs. Evolutions and fusions drink these.', hints: [], amount: 1 }
-    }
-    return offers.slice(0, 3)
+    // A free pick, as the route promises: one part, the cinder cache (sometimes an ember instead), and a large weld.
+    const hand = offers.slice(0, 1)
+    const ember = save.embers < 3 && run.rng() < 0.5
+    hand.push(ember
+      ? { kind: 'ember', title: 'Ember', description: 'A rare coal that keeps between runs. Evolutions and fusions drink these.', hints: [], amount: 1 }
+      : { kind: 'cinders', title: 'Cinder cache', description: 'A pouch of run currency.', hints: [], amount: 36 })
+    hand.push({ kind: 'heal', title: 'Weld', description: 'Restore a large share of integrity.', hints: [], amount: Math.round(maxHp * 0.5) })
+    return hand
   }
   while (offers.length < 3) {
     const roll = run.rng()
@@ -582,6 +584,8 @@ export interface SavedRun {
   commonBroken: boolean
   route: RouteStep[]
   decisions: string[]
+  /** Which reward table a pending reward screen came from (salvage value, rerolls). */
+  offerKind?: OfferKind
 }
 
 export function serializeRun(run: RunState): SavedRun {
@@ -617,6 +621,7 @@ export function serializeRun(run: RunState): SavedRun {
     commonBroken: run.commonBroken,
     route: run.route.map((r) => ({ ...r })),
     decisions: [...run.decisions],
+    offerKind: run.offerKind,
   }
 }
 
@@ -675,5 +680,7 @@ export function restoreRun(data: unknown): RunState | null {
   run.commonBroken = !!d.commonBroken
   run.route = Array.isArray(d.route) ? d.route.filter((r) => r && typeof r.nodeId === 'string').map((r) => ({ ...r })) : []
   run.decisions = strs(d.decisions)
+  const kinds: OfferKind[] = ['combat', 'elite', 'soft', 'treasure']
+  run.offerKind = kinds.includes(d.offerKind as OfferKind) ? d.offerKind! : 'combat'
   return run
 }

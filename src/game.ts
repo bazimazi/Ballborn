@@ -1,6 +1,7 @@
 import { artUrl, loadArt } from './assets'
 import { AudioBus } from './audio'
 import { COMPONENT_MAP } from './data/components'
+import { ENEMY_MAP } from './data/enemies'
 import { SYNERGY_MAP } from './data/synergies'
 import { foremanLine } from './data/lines'
 import { ROOM_MAP } from './data/rooms'
@@ -31,6 +32,7 @@ import {
   type ShopItem,
 } from './run'
 import {
+  ALT_KEYS,
   BTNS,
   browserStore,
   bumpAchievement,
@@ -60,7 +62,7 @@ import {
 import { TUNE } from './tune'
 import type { HitSource, RoomTemplate, Slot } from './types'
 import { SLOTS } from './types'
-import { damageLabel, HIT_LABEL, Hud, presetIds, screenHtml, type RunSummary, type Screen, type View } from './ui'
+import { damageLabel, HIT_LABEL, Hud, keyName, presetIds, screenHtml, type RunSummary, type Screen, type View } from './ui'
 import { escapeHtml, hypot } from './util'
 import { svg, type IconName } from './icons'
 import { attachTouchControls } from './touch'
@@ -172,6 +174,8 @@ export class Game {
     const input = this.input.sample()
     if (input.pausePressed && this.screen === 'play') this.pause()
     else if (input.pausePressed && this.screen === 'lab') this.toggleLabPause()
+    // The pause key (or controller Start) also leaves the pause menu, as it does in the lab.
+    else if (input.pausePressed && this.screen === 'pause') this.back()
     if (input.buildPressed && this.screen === 'play') {
       this.buildOpen = !this.buildOpen
       this.say(this.buildOpen ? 'Build sheet open. Game paused.' : 'Build sheet closed.')
@@ -258,10 +262,13 @@ export class Game {
       juice.update(dt, null, { x: 0, y: 0, w, h }, false, 0, 0)
       drawMenuScene(this.ctx, w, h, now / 1000, !s.cameraMotion, this.screen === 'title' ? 'title' : 'menu', juice)
     }
+    // One-frame cues: play them once, even when the world is frozen and juice.update() does not run to clear them.
     if (juice.armedEdge) this.audio.armed()
+    juice.armedEdge = false
     const hudSim = inWorld ? this.sim : null
     this.hud.update(hudSim, this.run, hudSim ? (this.run && !this.lab ? currentBuild(this.run) : hudSim.build) : null, this.save, this.prompt, this.buildOpen, dt)
     if (juice.arrivals) this.hud.bumpCinders()
+    juice.arrivals = 0
     this.stepPreviews(dt)
     const sim = this.sim
     this.audio.setState(this.screen === 'play' && !this.buildOpen ? (sim?.room.type === 'boss' ? 'boss' : 'play') : this.screen === 'pause' ? 'paused' : this.lab && !this.labPaused ? 'play' : 'menu')
@@ -272,7 +279,8 @@ export class Game {
   private tutorialPrompt(): string {
     if (!this.run?.tutorial || !this.sim) return ''
     const b = this.save.settings.bindings
-    const key = (code: string) => code.replace(/^Key/, '').replace(/Left$|Right$/, '')
+    const arrows: Record<string, string> = { ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓' }
+    const key = (code: string) => arrows[code] ?? code.replace(/^Key/, '').replace(/^Digit/, '').replace(/Left$|Right$/, '')
     const touch = this.input.touchMode
     // A few words at most: the gate banner and the speed ring say the rest.
     if (this.sim.exitOpen) return ''
@@ -291,13 +299,15 @@ export class Game {
 
   private onKey(e: KeyboardEvent): void {
     this.audio.resume()
-    if (this.input.rebinding) return
+    if (this.input.rebinding || e.repeat) return
     if (this.screen === 'reward' && ['Digit1', 'Digit2', 'Digit3'].includes(e.code) && !isTyping()) {
       this.pickOffer(Number(e.code.slice(5)) - 1)
       return
     }
     if (this.input.context === 'menu' && e.code === 'Escape') {
       e.preventDefault()
+      // Handled here; the frame must not also read it as the pause key.
+      this.input.consumeKey('Escape')
       this.back()
     }
   }
@@ -305,12 +315,14 @@ export class Game {
   /** Controller focus movement for every menu. */
   private menuNav(m: MenuInput): void {
     if (!m.up && !m.down && !m.left && !m.right && !m.confirm && !m.back) return
-    if (m.back) {
+    // In the build sheet there is nothing to press but close: A closes it, like B.
+    if (m.back || (m.confirm && this.buildOpen)) {
       this.back()
       return
     }
     const root = this.screen === 'play' ? document.getElementById('hud')! : this.screenEl
-    const items = Array.from(root.querySelectorAll<HTMLElement>('button:not([disabled]), select, input, summary')).filter((el) => el.offsetParent !== null)
+    // The on-screen touch buttons are not menu items.
+    const items = Array.from(root.querySelectorAll<HTMLElement>('button:not([disabled]), select, input, summary')).filter((el) => el.offsetParent !== null && !el.dataset.touch)
     if (!items.length) return
     const active = document.activeElement as HTMLElement | null
     const i = active ? items.indexOf(active) : -1
@@ -346,6 +358,10 @@ export class Game {
       return
     }
     if (this.screen === 'settings' || this.screen === 'codex') {
+      // Nothing armed in settings outlives it: a pending rebind would eat the next key anywhere.
+      this.rebinding = null
+      this.input.rebinding = null
+      this.confirmErase = false
       this.screen = this.returnTo
       this.refresh()
     } else if (this.screen === 'pause') {
@@ -396,8 +412,12 @@ export class Game {
       case 'launch': return this.launch(arg === 'tutorial')
       case 'continue': return this.continueRun()
       case 'retry-seed': {
+        // This one run replays the seed; the next "One more run" is random again (or whatever the title field says).
+        const typed = this.seedText
         this.seedText = arg
-        return this.launch(false)
+        this.launch(false)
+        this.seedText = typed
+        return
       }
       case 'title': return this.goTitle()
       case 'lab': return this.openLab()
@@ -507,6 +527,13 @@ export class Game {
     this.rebinding = null
     if (code) {
       const b = this.save.settings.bindings
+      // Space, the arrows, and F always keep their fixed jobs; sharing one would fire two actions.
+      const fixed = BTNS.find((x) => x !== btn && ALT_KEYS[x].includes(code))
+      if (fixed) {
+        const job: Record<Btn, string> = { left: 'roll left', right: 'roll right', up: 'hop', down: 'drop', ability: 'the ability', pause: 'pause', build: 'the build sheet' }
+        this.toast(`${keyName(code)} is always ${job[fixed]}.`)
+        return this.refresh()
+      }
       const other = BTNS.find((x) => x !== btn && b[x] === code)
       if (other) {
         b[other] = b[btn]
@@ -637,7 +664,8 @@ export class Game {
       hp: run.hp,
       energy: run.energy,
       heat: run.heat,
-      depth: run.roomsCleared,
+      // Scaling follows the map layer, so the two tutorial rooms do not make the first real room harder.
+      depth: currentNode(run)?.depth ?? run.roomsCleared,
       curse: run.curseNext,
       gentle,
       god: false,
@@ -646,7 +674,8 @@ export class Game {
       assist: this.save.settings.assistDamage,
     }, this.listeners())
     run.roomIndex++
-    run.curseNext = false
+    // The bath's curse waits for a room it can apply to.
+    if (template.type === 'combat' || template.type === 'elite') run.curseNext = false
     run.templatesSeen.push(template.id)
     this.stepper.reset()
     this.buildOpen = false
@@ -808,6 +837,8 @@ export class Game {
       run.tutorial = false
       run.roomsCleared++
       run.nodes = generateMap(run.rng)
+      // The run proper starts whole: practice dents do not follow the ball onto the route.
+      run.hp = currentBuild(run).stats.maxHp
       this.save.seenTutorial = true
       this.persist()
       this.toMap()
@@ -1055,12 +1086,13 @@ export class Game {
   private meetEnemy(id: string): void {
     if (this.save.discoveredEnemies.includes(id)) return
     this.save.discoveredEnemies.push(id)
-    this.toast('New', 'target')
+    this.toast(`New construct: ${ENEMY_MAP[id]?.name ?? id}`, 'target')
   }
 
   private onDiscovery(id: string): void {
     const syn = SYNERGY_MAP[id]
-    if (!syn || this.save.discoveredSynergies.includes(id)) return
+    // The lab is a sandbox: nothing found there touches the save.
+    if (this.lab || !syn || this.save.discoveredSynergies.includes(id)) return
     this.save.discoveredSynergies.push(id)
     this.audio.ui('discover')
     this.toast(syn.name, 'link', 'epic')
@@ -1150,6 +1182,15 @@ export class Game {
     document.documentElement.style.setProperty('--touch-scale', String(s.touchSize))
     document.body.classList.toggle('left-handed', s.leftHanded)
     this.input.bindings = { ...s.bindings }
+    // The HUD buttons name the keys actually bound.
+    const short = (code: string) => (code === 'Escape' ? 'Esc' : keyName(code))
+    for (const [act, btn, label] of [['build', 'build', 'Build sheet'], ['pause', 'pause', 'Pause']] as const) {
+      const el = document.querySelector<HTMLElement>(`.hud-btn[data-touch="${act}"]`)
+      if (!el) continue
+      el.title = `${label} (${short(s.bindings[btn])})`
+      const k = el.querySelector('.key')
+      if (k) k.textContent = short(s.bindings[btn])
+    }
     this.audio.setVolumes(s.sfx, s.music)
   }
 
@@ -1278,7 +1319,8 @@ export class Game {
       if (active && this.screenEl.contains(active) === false && active !== document.body) active.blur()
       return
     }
-    const target = (focusKey && this.screenEl.querySelector<HTMLElement>(focusKey))
+    // A control that just became disabled (sold, unaffordable, spent) cannot hold focus: fall through to the next best.
+    const target = (focusKey && this.screenEl.querySelector<HTMLElement>(`${focusKey}:not([disabled])`))
       || this.screenEl.querySelector<HTMLElement>('[data-autofocus]')
       || this.screenEl.querySelector<HTMLElement>('button:not([disabled]), select, input')
     target?.focus({ preventScroll: true })

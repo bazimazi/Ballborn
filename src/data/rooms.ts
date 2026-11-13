@@ -276,8 +276,8 @@ export const ROOMS: RoomTemplate[] = deepFreeze([
     objective: 'Pass the stamps and break the constructs.',
     platforms: [floor(-20, 2040), plat(900, 500, 200)],
     hazards: [
-      { type: 'crusher', x: 520, y: 70, w: 130, h: 34, drop: 440, period: 2.5, phase: 0 },
-      { type: 'crusher', x: 1180, y: 70, w: 130, h: 34, drop: 440, period: 2.5, phase: 1.1 },
+      { type: 'crusher', x: 520, y: 70, w: 130, h: 34, drop: 504, period: 2.5, phase: 0 },
+      { type: 'crusher', x: 1180, y: 70, w: 130, h: 34, drop: 504, period: 2.5, phase: 1.1 },
     ],
     spawns: [
       { id: 'grunt', x: 760, y: 520 },
@@ -375,9 +375,9 @@ export const ROOMS: RoomTemplate[] = deepFreeze([
     objective: 'Walk the stamps. They telegraph every drop.',
     platforms: [floor(-20, 1860)],
     hazards: [
-      { type: 'crusher', x: 380, y: 60, w: 150, h: 36, drop: 450, period: 2.4, phase: 0 },
-      { type: 'crusher', x: 760, y: 60, w: 150, h: 36, drop: 450, period: 2.4, phase: 0.8 },
-      { type: 'crusher', x: 1160, y: 60, w: 150, h: 36, drop: 450, period: 2.4, phase: 1.6 },
+      { type: 'crusher', x: 380, y: 60, w: 150, h: 36, drop: 512, period: 2.4, phase: 0 },
+      { type: 'crusher', x: 760, y: 60, w: 150, h: 36, drop: 512, period: 2.4, phase: 0.8 },
+      { type: 'crusher', x: 1160, y: 60, w: 150, h: 36, drop: 512, period: 2.4, phase: 1.6 },
     ],
     spawns: [],
   }),
@@ -577,8 +577,8 @@ export const ROOMS: RoomTemplate[] = deepFreeze([
       plat(300, 470, 200),
       plat(1040, 430, 170, 22, 'spring'),
     ],
-    // The seam between floors is slag, not a bottomless pit: a missed hop costs integrity.
-    hazards: [lava(760, 100)],
+    // The seams between floors are slag, not bottomless pits: a missed hop costs integrity.
+    hazards: [lava(760, 100), lava(1340, 120)],
     spawns: [],
   }),
 ])

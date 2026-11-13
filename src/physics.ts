@@ -41,7 +41,7 @@ export function horizontalAccel(stats: Stats, inputX: number, vx: number, ground
   } else if (!grounded) {
     ax -= vx * (0.28 / Math.max(0.55, stats.airControl))
   }
-  if (!grounded && inputX !== 0 && vx !== 0 && Math.sign(vx) === -inputX) {
+  if (!grounded && inputX !== 0 && vx !== 0 && Math.sign(vx) === -Math.sign(inputX)) {
     ax += inputX * 240 * stats.stability
   }
   return ax

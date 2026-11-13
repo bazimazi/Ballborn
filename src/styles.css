@@ -739,17 +739,17 @@ select { background: #1a1612; border: 1px solid var(--line); padding: 8px; min-h
 
 /* ---------------------------------------------------------------------------
    Ball lab: a dock over the live room. A strip of slots, and one drawer at most. */
-#screen.lab { place-items: start stretch; padding-top: max(10px, var(--sat)); padding-right: calc(max(16px, var(--sar)) + 56px); }
+#screen.lab { place-items: start stretch; grid-template-columns: minmax(0, 1fr); padding-top: max(10px, var(--sat)); padding-right: calc(max(16px, var(--sar)) + 56px); }
 body[data-screen^="lab"] .hud-top .meter, body[data-screen^="lab"] .hud-top .objective, body[data-screen^="lab"] .hud-top .resources { visibility: hidden; }
 .lab-dock {
-  pointer-events: none; width: min(1100px, 100%); display: flex; flex-direction: column; gap: 6px;
+  pointer-events: none; width: min(1100px, 100%); min-width: 0; display: flex; flex-direction: column; gap: 6px;
   max-height: calc(var(--vh) - 20px - var(--sat) - var(--sab));
 }
 .lab-bar, .lab-drawer {
   pointer-events: auto; background: #1a1612e8; border: 1px solid var(--line); box-shadow: var(--shadow); backdrop-filter: blur(8px);
 }
 .lab-dock.paused .lab-bar { border-color: var(--molten-2); }
-.lab-bar { display: flex; align-items: center; gap: 8px; padding: 6px; }
+.lab-bar { display: flex; align-items: center; gap: 8px; padding: 6px; min-width: 0; }
 .lab-name { display: flex; flex-direction: column; min-width: 0; flex: 0 1 auto; }
 .lab-name b { font-family: Syne, sans-serif; font-size: 1.05rem; letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lab-name .kicker { font-size: 0.62rem; }
@@ -822,6 +822,10 @@ body.reduce-motion .card { transform: none; translate: none; }
 /* ---------------------------------------------------------------------------
    Small screens. Phones in landscape are short; phones in portrait are narrow.
    Both get tighter panels, carousels instead of columns, and a leaner HUD. */
+/* Narrow screens: the lab strip shows icons only (names would be cut to a letter). */
+@media (max-width: 900px) {
+  .lab-slot .slot-name, .lab-name { display: none; }
+}
 @media (max-width: 900px), (max-height: 640px) {
   #screen { padding: max(8px, var(--sat)) max(8px, var(--sar)) max(8px, var(--sab)) max(8px, var(--sal)); }
   #screen.title { padding-left: max(16px, var(--sal)); }

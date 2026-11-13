@@ -81,19 +81,19 @@ export const HEATS: HeatDef[] = deepFreeze([
   },
   {
     id: 1, name: 'Forge Heat I', detail: 'Constructs work faster. Recovery between rooms is thinner.',
-    effects: ['Constructs shoot and attack 15% more often.', 'Room recovery drops from 10% to 8% of integrity.', 'Construct integrity +5%.'],
+    effects: ['Constructs shoot and attack 15% more often.', 'Room recovery drops from 10% to 8% of integrity.', 'Construct integrity +5%.', 'The Colossus: +10% integrity, attacks 0.12 s sooner.'],
     enemyHp: 1.05, enemyDamage: 1, attackRate: 1.15, eliteHp: 1, roomRecovery: 0.08, geysers: false,
     shopPrice: 1, gravity: 1, bossHp: 1.1, bossTempo: 0.12, healDrops: 1,
   },
   {
     id: 2, name: 'Forge Heat II', detail: 'Combat rooms weep slag. Elites are heavier. Shops charge more.',
-    effects: ['Everything in Heat I.', 'Combat and elite rooms gain two slag geysers.', 'Elites +15% integrity. Constructs hit 8% harder.', 'Shop prices +18%.'],
+    effects: ['Everything in Heat I. Room recovery 7%.', 'Combat and elite rooms gain two slag geysers.', 'Elites +15% integrity. Constructs hit 8% harder.', 'Shop prices +18%.', 'The Colossus: +20% integrity, attacks 0.24 s sooner.'],
     enemyHp: 1.05, enemyDamage: 1.08, attackRate: 1.15, eliteHp: 1.15, roomRecovery: 0.07, geysers: true,
     shopPrice: 1.18, gravity: 1, bossHp: 1.2, bossTempo: 0.24, healDrops: 1,
   },
   {
     id: 3, name: 'Forge Heat III', detail: 'Gravity sits heavier. The Colossus is quicker. Healing is scarce.',
-    effects: ['Everything in Heat II.', 'Gravity +8%: shorter hops for every build.', 'The Colossus attacks 0.36 s sooner.', 'Healing drops are halved. Room recovery 6%.'],
+    effects: ['Everything in Heat II, sharper: constructs +10% integrity, hit 12% harder, attack 20% more often. Elites +20%. Shop prices +30%.', 'Gravity +8%: shorter hops for every build.', 'The Colossus: +30% integrity, attacks 0.36 s sooner.', 'Healing drops are halved. Room recovery 6%.'],
     enemyHp: 1.1, enemyDamage: 1.12, attackRate: 1.2, eliteHp: 1.2, roomRecovery: 0.06, geysers: true,
     shopPrice: 1.3, gravity: 1.08, bossHp: 1.3, bossTempo: 0.36, healDrops: 0.5,
   },
