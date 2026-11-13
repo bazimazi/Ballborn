@@ -46,7 +46,24 @@ export interface LiveEnemy extends FxEnemy {
   pinned: boolean
   /** Placed by the room (not split off or summoned). Only these respawn in the lab. */
   origin: boolean
+  /** An elite's extra trait, rolled from the room's stream. */
+  affix?: Affix
+  /** Attack tempo multiplier (hasted elites). */
+  attackMul: number
+  /** Seconds left in a Ram Hound's charge. */
+  charging: number
 }
+
+export type Affix = 'hasted' | 'plated' | 'volatile' | 'magnetic'
+
+/** Elite traits: each one is a different question for the build, and each reads at a glance. */
+export const AFFIXES: Record<Affix, { label: string; color: string; hint: string }> = {
+  hasted: { label: 'HASTED', color: '#7cf3ff', hint: 'Moves and fires faster. Meet it at speed.' },
+  plated: { label: 'PLATED', color: '#d8dee8', hint: 'Extra armor. Mass, fire, or the crown.' },
+  volatile: { label: 'VOLATILE', color: '#ff6a2a', hint: 'Bursts when it breaks. Hit it and leave.' },
+  magnetic: { label: 'MAGNETIC', color: '#5fc8ff', hint: 'Tows the ball in. Heavy cores shrug.' },
+}
+const AFFIX_LIST = Object.keys(AFFIXES) as Affix[]
 
 export interface Solid {
   x: number
@@ -69,6 +86,8 @@ export interface Solid {
 export interface Bullet {
   x: number
   y: number
+  px?: number
+  py?: number
   vx: number
   vy: number
   r: number
@@ -82,6 +101,8 @@ export interface Bullet {
 export interface Pickup {
   x: number
   y: number
+  px?: number
+  py?: number
   vx: number
   vy: number
   r: number
@@ -197,6 +218,7 @@ export interface SimListeners {
   onKill?: (record: HitRecord, enemy: { defId: string; elite: boolean }) => void
   onBossPhase?: (phase: number) => void
   onHit?: (record: HitRecord) => void
+  onCounter?: () => void
 }
 
 export interface SimOptions {
@@ -258,6 +280,10 @@ function zeroBy<K extends string>(keys: readonly K[]): Record<K, number> {
   return out
 }
 
+/** How close the ball must be (world units) before a shooter starts a wind-up: about a screen. */
+const SHOT_RANGE_X = 860
+const SHOT_RANGE_Y = 560
+
 export class Simulation implements EffectApi {
   readonly dt = TUNE.fixedDt
   room: RoomTemplate
@@ -265,6 +291,9 @@ export class Simulation implements EffectApi {
   /** Ball position at the start of the latest tick, for render interpolation. */
   prevX: number
   prevY: number
+  /** Ball spin angle at the start of the latest tick, and its angular velocity (cosmetic). */
+  prevSpin = 0
+  private spinRate = 0
   enemies: LiveEnemy[] = []
   bullets: Bullet[] = []
   pickups: Pickup[] = []
@@ -323,6 +352,14 @@ export class Simulation implements EffectApi {
   /** Damage the Colossus and its rivets took, per source. */
   bossDealt: Record<HitSource, number> = zeroBy(HIT_SOURCES)
   kills = 0
+  /** Rams that landed, and how many of them were clean. */
+  rams = 0
+  cleanRams = 0
+  /** When the gate opened (room time) and the integrity lost by then; null while it is shut or if it never was. */
+  gateTime: number | null = null
+  gateTaken = 0
+  /** The gate was open from the first tick (a traversal): the clock runs to the exit instead. */
+  openAtStart = false
   /** Cinders collected this room, drained by the game when the room ends. */
   cinderPocket = 0
   readonly heat: HeatDef
@@ -374,6 +411,13 @@ export class Simulation implements EffectApi {
         breakable: !!p.breakable,
         alive: true,
       })
+      // A moving platform starts where its motion says it is at time zero, so the first tick does not jump it.
+      const s = this.solids[this.solids.length - 1]!
+      if (s.move) {
+        const off = Math.sin(s.move.phase ?? 0) * s.move.amp
+        if (s.move.axis === 'x') s.x = s.frameX = s.baseX + off
+        else s.y = s.frameY = s.baseY + off
+      }
     }
     const fight = room.type === 'combat' || room.type === 'elite'
     if (this.heat.geysers && fight) {
@@ -385,7 +429,8 @@ export class Simulation implements EffectApi {
       this.addGeyser(room, 0.52, 2.3, 0.7)
       this.addGeyser(room, 0.82, 2.6, 1.6)
     }
-    const scale = (1 + opts.depth * 0.08) * this.heat.enemyHp * (opts.gentle ? 0.75 : 1)
+    // Seven layers deep: a gentler slope than the old five-room route, so the last fights are hard, not spongy.
+    const scale = (1 + opts.depth * 0.065) * this.heat.enemyHp * (opts.gentle ? 0.75 : 1)
     this.enemyScale = scale
     const spawns = opts.lab
       ? [
@@ -398,6 +443,7 @@ export class Simulation implements EffectApi {
     for (const s of spawns) this.enemies.push({ ...this.makeEnemy(s.id, s.x, s.y, !!s.elite, scale), origin: true })
     if (room.type === 'boss') this.makeBoss()
     if (!this.enemies.some((e) => e.alive) && room.type === 'traversal' && !room.rules?.includes('survival')) this.exitOpen = true
+    this.openAtStart = this.exitOpen
     this.fireEvent('onRoomStart', this.ball.x, this.ball.y, 0, 0, 0)
   }
 
@@ -453,6 +499,8 @@ export class Simulation implements EffectApi {
     this.time += dt
     this.prevX = this.ball.x
     this.prevY = this.ball.y
+    this.prevSpin = this.ball.spin
+    this.markPrev()
     this.gateWarn = Math.max(0, this.gateWarn - dt)
     const stats = this.effectiveStats()
     this.energy = Math.min(stats.energyMax, this.energy + stats.energyRegen * dt)
@@ -468,8 +516,10 @@ export class Simulation implements EffectApi {
       this.comboTimer -= dt
       if (this.comboTimer <= 0) this.combo = 0
     }
+    // A hop pressed in the air waits for the next floor contact while the button is held,
+    // so a bouncy ball mid-bounce still hops the moment it touches down.
     if (input.hopPressed) this.jumpBuffer = TUNE.jumpBuffer
-    else this.jumpBuffer = Math.max(0, this.jumpBuffer - dt)
+    else if (!(input.hopHeld && this.jumpBuffer > 0)) this.jumpBuffer = Math.max(0, this.jumpBuffer - dt)
     if (input.abilityPressed) this.useAbility(input)
 
     let ix = input.x
@@ -498,7 +548,9 @@ export class Simulation implements EffectApi {
 
     if (this.riding) {
       this.ball.x += this.riding.x - this.riding.frameX
-      this.ball.y += this.riding.y - this.riding.frameY
+      // A rising platform already lifts the ball through collision; only a sinking one needs carrying down.
+      const dy = this.riding.y - this.riding.frameY
+      if (dy > 0) this.ball.y += dy
     }
 
     this.updateEnemies(dt)
@@ -518,12 +570,41 @@ export class Simulation implements EffectApi {
     if (this.done) return
     this.updateRespawns(dt)
     this.checkObjective(dt)
+    if (this.exitOpen && this.gateTime === null && !this.openAtStart) {
+      this.gateTime = this.time
+      this.gateTaken = this.roomDamage
+    }
     this.tryExit()
     if (this.done) return
     if (this.ball.y > this.room.height + 150) this.hurt(1, 'pit')
     if (this.done) return
     this.enemies = this.enemies.filter((e) => e.alive)
     this.updateCosmetics(dt)
+  }
+
+  /** Remember where every moving thing starts this tick, so rendering can interpolate between ticks. */
+  private markPrev(): void {
+    for (const e of this.enemies) {
+      e.px = e.x
+      e.py = e.y
+    }
+    for (const b of this.bullets) {
+      b.px = b.x
+      b.py = b.y
+    }
+    for (const p of this.pickups) {
+      p.px = p.x
+      p.py = p.y
+    }
+    const boss = this.boss
+    if (boss) {
+      boss.px = boss.x
+      boss.py = boss.y
+      for (const r of boss.rivets) {
+        r.px = r.x
+        r.py = r.y
+      }
+    }
   }
 
   private updateCosmetics(dt: number): void {
@@ -572,7 +653,9 @@ export class Simulation implements EffectApi {
     const vCap = cap * 1.5
     if (Math.abs(this.ball.vy) > vCap && this.boost <= 0) this.ball.vy = Math.sign(this.ball.vy) * vCap
     if (this.jumpBuffer > 0 && (this.grounded || this.coyote > 0)) {
-      this.ball.vy = hopVelocity(stats)
+      // Hopping off a spring is never weaker than the spring itself.
+      const springV = this.groundKind === 'spring' ? -760 / Math.pow(stats.mass, 0.38) : 0
+      this.ball.vy = Math.min(hopVelocity(stats), springV)
       this.jumpBuffer = 0
       this.coyote = 0
       this.grounded = false
@@ -593,6 +676,9 @@ export class Simulation implements EffectApi {
         this.groundKind = s.kind
         this.groundVx = s.kind === 'conveyor' ? s.conveyor : 0
         this.riding = s
+        // Small floor bounces die out, so even a rubber shell comes to rest and rolls instead of
+        // pattering forever; big drops and rams still rebound at full bounce.
+        if (s.kind !== 'spring' && this.ball.vy < 0 && c.impactSpeed < 300) this.ball.vy *= clamp((c.impactSpeed - 110) / 190, 0, 1)
         if (Math.abs(this.ball.vy) < 48) this.ball.vy = 0
         if (s.kind === 'spring' && (c.impactSpeed > 60 || hopHeld)) {
           this.ball.vy = -Math.max(Math.abs(hopVelocity(stats)), 760 / Math.pow(stats.mass, 0.38))
@@ -622,12 +708,15 @@ export class Simulation implements EffectApi {
     if (this.grounded) {
       this.groundTime += dt
       this.coyote = TUNE.coyote
-      this.ball.spin = -this.ball.vx / this.ball.r
+      // Rolling without slipping: the angle advances with the distance covered.
+      this.spinRate = this.ball.vx / this.ball.r
     } else {
       this.groundTime = 0
       this.coyote = Math.max(0, this.coyote - dt)
-      this.ball.spin += dt * 2
+      // In the air the ball keeps turning at the rate it left the ground with, slowly easing.
+      this.spinRate *= Math.exp(-0.6 * dt)
     }
+    this.ball.spin += this.spinRate * dt
   }
 
   /** Why the ability cannot fire right now, or null when it is ready. */
@@ -723,8 +812,9 @@ export class Simulation implements EffectApi {
       } else if (e.behavior === 'fly') {
         const dx = this.ball.x - e.x
         const dy = this.ball.y - 30 - e.y
-        e.vx += clamp(dx, -1, 1) * e.moveSpeed * 2.2 * slowMul * dt
-        e.vy += clamp(dy, -1, 1) * e.moveSpeed * 2.2 * slowMul * dt
+        // Proportional steering: full thrust far away, easing in close, so fliers do not buzz back and forth across the ball.
+        e.vx += clamp(dx / 70, -1, 1) * e.moveSpeed * 2.2 * slowMul * dt
+        e.vy += clamp(dy / 70, -1, 1) * e.moveSpeed * 2.2 * slowMul * dt
         e.vx *= Math.exp(-1.4 * dt)
         e.vy *= Math.exp(-1.4 * dt)
       } else if (e.behavior === 'turret') {
@@ -745,6 +835,8 @@ export class Simulation implements EffectApi {
         }
         e.vx *= Math.exp(-2 * dt)
         e.vy *= Math.exp(-2 * dt)
+      } else if (e.behavior === 'charge') {
+        this.updateCharger(e, dt, slowMul)
       } else {
         const toBall = this.ball.x - e.x
         let dir = Math.sign(toBall) || e.facing
@@ -797,13 +889,19 @@ export class Simulation implements EffectApi {
       this.enemyHazards(e)
       if (!e.alive) continue
       if (e.shot) {
+        // A ram during the wind-up spoils the shot.
+        if (e.windup > 0 && e.stun > 0) {
+          e.windup = 0
+          e.attackCd = Math.max(e.attackCd, 0.45)
+        }
         if (e.windup > 0) {
           e.windup -= dt
           if (e.windup <= 0) {
             this.shoot(e)
-            e.attackCd = e.shot.period / this.heat.attackRate
+            e.attackCd = e.shot.period / this.heat.attackRate / e.attackMul
           }
-        } else if (e.attackCd <= 0 && e.stun <= 0) {
+        } else if (e.attackCd <= 0 && e.stun <= 0 && Math.abs(this.ball.x - e.x) < SHOT_RANGE_X && Math.abs(this.ball.y - e.y) < SHOT_RANGE_Y) {
+          // Shooters only open fire on a ball that is near enough to have seen them.
           e.windup = 0.35
         }
       }
@@ -813,6 +911,47 @@ export class Simulation implements EffectApi {
       if (this.done) return
     }
     this.separateEnemies()
+  }
+
+  /**
+   * Ram Hound: walk, wind up (the body shakes, chevrons point the way), then a
+   * committed charge along the floor. A wall or the end of the run leaves it
+   * skidding and dazed: the punish window.
+   */
+  private updateCharger(e: LiveEnemy, dt: number, slowMul: number): void {
+    const dx = this.ball.x - e.x
+    if (e.charging > 0) {
+      e.charging -= dt
+      e.vx = e.facing * e.moveSpeed * 5.4 * slowMul
+      const wall = (e.facing < 0 && e.x < e.r + 30) || (e.facing > 0 && e.x > this.room.width - e.r - 30)
+      if (wall || e.charging <= 0) {
+        e.charging = 0
+        e.stun = Math.max(e.stun, wall ? 1.3 : 0.9)
+        e.vx *= 0.4
+        this.burst(e.x + e.facing * e.r, e.y + e.r * 0.6, 8, e.accent, 160)
+        if (wall) this.listeners.onShake?.(3)
+      } else if (this.fx() < 0.5) {
+        this.burst(e.x - e.facing * e.r, e.y + e.r * 0.8, 1, e.accent, 60)
+      }
+    } else if (e.windup > 0) {
+      e.windup -= dt
+      e.vx *= Math.exp(-8 * dt)
+      if (e.windup <= 0) {
+        e.charging = 0.9
+        this.emit({ type: 'hop', x: e.x, y: e.y + e.r })
+      }
+    } else {
+      e.facing = Math.sign(dx) || e.facing
+      const ahead = this.solidAt(e.x + e.facing * (e.r + 16), e.y + e.r)
+      if (ahead) e.vx += e.facing * e.moveSpeed * 2.4 * slowMul * dt
+      e.vx *= Math.exp(-2.4 * dt)
+      const level = Math.abs(this.ball.y - e.y) < 120
+      if (e.attackCd <= 0 && level && Math.abs(dx) < 620) {
+        e.windup = 0.62 / this.heat.attackRate
+        e.attackCd = (2.4 / this.heat.attackRate) / e.attackMul
+      }
+    }
+    e.vy += 1600 * dt
   }
 
   /**
@@ -874,6 +1013,8 @@ export class Simulation implements EffectApi {
     const dx = this.ball.x - e.x
     const dy = this.ball.y - e.y
     const len = hypot(dx, dy) || 1
+    // Point blank, the shot would spawn inside the ball: the contact already decided this exchange.
+    if (len < e.r + this.ball.r + 10) return
     this.bullets.push({
       x: e.x + (dx / len) * (e.r + 8),
       y: e.y + (dy / len) * (e.r + 8),
@@ -913,6 +1054,18 @@ export class Simulation implements EffectApi {
       const rel = (this.ball.vx - e.vx) * nx + (this.ball.vy - e.vy) * ny
       const ballToward = -(this.ball.vx * nx + this.ball.vy * ny)
       const incoming = hypot(this.ball.vx, this.ball.vy)
+      // A charging hound that catches the ball hits hard, and the charge ends there.
+      if (e.charging > 0 && ballToward < 90) {
+        this.hurt(e.contact * 1.15, 'contact')
+        if (this.done) return
+        this.ball.vx += nx * 520
+        this.ball.vy = Math.min(this.ball.vy, -320)
+        e.charging = 0
+        e.stun = Math.max(e.stun, 0.5)
+        e.hitCd = 0.4
+        this.listeners.onShake?.(6)
+        continue
+      }
       // The enemy walking into a ball that is leaving is not a ram.
       if (ballToward < 90) {
         const push = 280 / Math.pow(stats.mass, 0.35)
@@ -944,15 +1097,17 @@ export class Simulation implements EffectApi {
         this.ball.vy += ny * (away - vn) * 0.45
       }
       e.hitCd = TUNE.enemyHitLock
-      if (this.phase > 0) continue
-      this.resolveHit(e, nx, ny, Math.max(closing, ballToward))
+      // Dash and burst phase protect the ball (contact, recoil, bolts); they never cancel the ram itself.
+      this.resolveHit(e, nx, ny, Math.max(closing, ballToward), ballToward)
       if (this.done) return
     }
     this.collideBoss()
   }
 
-  private resolveHit(e: LiveEnemy, nx: number, ny: number, closing: number): void {
+  private resolveHit(e: LiveEnemy, nx: number, ny: number, closing: number, toward = closing): void {
     const stats = this.effectiveStats()
+    // Landing a slam on a construct spends it: no second shockwave on the next floor touch.
+    if (ny < -0.45) this.slamArmed = false
     const crit = this.rng() < stats.critChance
     let raw = collisionDamage(stats, closing, this.comboMul(), crit)
     raw += stats.contact * (0.35 + closing / 900)
@@ -962,11 +1117,20 @@ export class Simulation implements EffectApi {
       raw *= 0.18
       blocked = true
     }
+    // Meeting a hound's charge head-on, at real speed: its own run goes into the ram. A nudge is not a counter.
+    const counter = e.charging > 0 && !blocked && toward >= stats.maxSpeed * 0.4
+    if (counter) {
+      raw *= 1.5
+      e.charging = 0
+      e.stun = Math.max(e.stun, 1.2)
+    }
     const armored = !!e.armorGate && raw < e.armorGate
     const hpBefore = e.hp
     const dealt = this.damageEnemy(e, raw, this.build.impactTags, { kind: 'impact', source: 'collision' })
     const killed = !e.alive
     const clean = !blocked && (killed || closing >= stats.maxSpeed * TUNE.cleanRamRatio)
+    this.rams++
+    if (clean) this.cleanRams++
     this.fireEvent('onImpact', e.x, e.y, nx, ny, closing, e, dealt)
     if (this.done) return
     if (!clean) {
@@ -977,13 +1141,18 @@ export class Simulation implements EffectApi {
     this.squash = 0.12
     this.emit({ type: 'hit', x: e.x + nx * e.r, y: e.y + ny * e.r, nx, ny, dealt, speed: closing, clean, crit, blocked, killed })
     this.listeners.onImpactSfx?.(closing, blocked ? 'block' : clean ? 'clean' : 'glance')
-    this.listeners.onShake?.(clamp(dealt / 18, 1.5, 12))
+    // The renderer adds its own kick for every hit and kill; this is the extra weight of a big one.
+    this.listeners.onShake?.(clamp(dealt / 30, 0.8, 7))
     if (dealt > 24) this.listeners.onHitstop?.(this.opts.gentle ? 0 : clamp(dealt / 900, 0.02, 0.05))
     if (clean && dealt > 30) this.listeners.onFlash?.(clamp(dealt / 160, 0.15, 0.5))
     this.burst(e.x, e.y, blocked ? 3 : 6 + dealt / 12, crit ? '#ffe28a' : this.build.visual.trail, 80 + closing)
     const tag = blocked ? ' BLOCK' : armored ? ' ARMOR' : clean ? '' : ' glance'
     this.floater(e.x, e.y - e.r, `${Math.round(dealt)}${crit ? '!' : ''}${tag}`, blocked || armored ? '#9aa4b2' : crit ? '#ffe28a' : clean ? '#fff6ea' : '#c3b4a2')
-    if (clean && !killed && hpBefore > 0) this.floater(e.x, e.y - e.r - 18, 'CLEAN', '#8dffc0')
+    if (counter) {
+      this.floater(e.x, e.y - e.r - 18, 'COUNTER', '#ffd15c')
+      this.listeners.onCounter?.()
+    }
+    else if (clean && !killed && hpBefore > 0) this.floater(e.x, e.y - e.r - 18, 'CLEAN', '#8dffc0')
     // A killing ram already counts once through kill().
     if (dealt > 8 && !killed) this.addCombo()
   }
@@ -1152,7 +1321,7 @@ export class Simulation implements EffectApi {
 
   private collideBoss(): void {
     const boss = this.boss
-    if (!boss || !boss.alive || this.phase > 0) return
+    if (!boss || !boss.alive) return
     const stats = this.effectiveStats()
     for (const rivet of boss.rivets) {
       if (!rivet.alive) continue
@@ -1162,7 +1331,7 @@ export class Simulation implements EffectApi {
         if (closing < 180) {
           this.hurt(6, 'boss')
           // Push the ball clear, or it stays embedded and is hurt every tick.
-          this.bounceOff(rivet.x, rivet.y)
+          this.bounceOff(rivet.x, rivet.y, rivet.r)
           return
         }
         const dmg = collisionDamage(stats, closing, this.comboMul(), false) * 0.7
@@ -1172,7 +1341,7 @@ export class Simulation implements EffectApi {
         const nx = (this.ball.x - rivet.x) / (d || 1)
         const ny = (this.ball.y - rivet.y) / (d || 1)
         this.emit({ type: 'hit', x: rivet.x + nx * rivet.r, y: rivet.y + ny * rivet.r, nx, ny, dealt, speed: closing, clean: true, crit: false, blocked: false, killed: !rivet.alive })
-        this.bounceOff(rivet.x, rivet.y)
+        this.bounceOff(rivet.x, rivet.y, rivet.r)
         this.fireEvent('onImpact', rivet.x, rivet.y, nx, ny, closing, rivet, dealt)
         return
       }
@@ -1182,7 +1351,7 @@ export class Simulation implements EffectApi {
       const closing = hypot(this.ball.vx, this.ball.vy)
       if (closing < 200) {
         this.hurt(8, 'boss')
-        this.bounceOff(boss.x, boss.y)
+        this.bounceOff(boss.x, boss.y, boss.r)
         return
       }
       const crit = this.rng() < stats.critChance
@@ -1191,7 +1360,7 @@ export class Simulation implements EffectApi {
       const nx = (this.ball.x - boss.x) / (d || 1)
       const ny = (this.ball.y - boss.y) / (d || 1)
       this.emit({ type: 'hit', x: boss.x + nx * boss.r, y: boss.y + ny * boss.r, nx, ny, dealt, speed: closing, clean: boss.phase > 1, crit, blocked: boss.phase === 1, killed: !boss.alive })
-      this.bounceOff(boss.x, boss.y)
+      this.bounceOff(boss.x, boss.y, boss.r)
       this.fireEvent('onImpact', boss.x, boss.y, nx, ny, closing, boss, dealt)
       if (this.done) return
       this.floater(boss.x, boss.y - 70, `${Math.round(dealt)}${boss.phase === 1 ? ' PLATE' : ''}`, boss.phase === 1 ? '#9aa4b2' : '#fff6ea')
@@ -1302,7 +1471,7 @@ export class Simulation implements EffectApi {
     this.listeners.onShake?.(12)
   }
 
-  private bounceOff(x: number, y: number): void {
+  private bounceOff(x: number, y: number, r: number): void {
     const dx = this.ball.x - x
     const dy = this.ball.y - y
     const d = hypot(dx, dy) || 1
@@ -1314,8 +1483,12 @@ export class Simulation implements EffectApi {
       this.ball.vx -= (1 + rest) * vn * nx
       this.ball.vy -= (1 + rest) * vn * ny
     }
-    this.ball.x = x + nx * (this.ball.r + 78)
-    this.ball.y = y + ny * (this.ball.r + 78)
+    // Out by the overlap only (plus a hair), not a fixed jump: the old fixed push teleported the ball
+    // up to 60 px off a rivet, sometimes into the floor. The ball's own rebound carries it clear.
+    this.ball.x = x + nx * (this.ball.r + r + 2)
+    this.ball.y = y + ny * (this.ball.r + r + 2)
+    this.prevX = this.ball.x
+    this.prevY = this.ball.y
   }
 
   /** A geyser on open floor near a fraction of the room's width: never over a pit, under a bridge, or on the spawn or gate. */
@@ -1345,7 +1518,8 @@ export class Simulation implements EffectApi {
   }
 
   private makeBoss(): void {
-    const hp = 860 * this.heat.bossHp
+    // The longer route arrives with two more parts than it used to; the Colossus is a little thicker for it.
+    const hp = 940 * this.heat.bossHp
     const x = this.room.width - 320
     const y = 530
     const rivet = (ox: number, oy: number): Rivet => ({
@@ -1619,6 +1793,7 @@ export class Simulation implements EffectApi {
   }
 
   private respawnBall(): void {
+    this.trail.length = 0
     this.ball.x = this.room.player.x
     this.ball.y = this.room.player.y
     this.ball.vx = 0
@@ -1858,7 +2033,7 @@ export class Simulation implements EffectApi {
     const def = ENEMY_MAP[id]
     if (!def) throw new Error(`Unknown construct: ${id}`)
     const hp = def.hp * scale * (elite ? 1.35 * this.heat.eliteHp : 1)
-    return {
+    const e: LiveEnemy = {
       kind: 'enemy',
       uid: this.uid++,
       defId: def.id,
@@ -1875,8 +2050,23 @@ export class Simulation implements EffectApi {
       moveSpeed: def.speed * (elite ? 1.08 : 1),
       resists: def.resists ? def.resists.map((r) => ({ ...r })) : [],
       split: def.split, explodeOnDeath: def.explode, shot: def.shot, keepAway: def.keepAway, pull: def.pull,
-      hitFlash: 0, blinkCd: 0, origin: false,
+      hitFlash: 0, blinkCd: 0, origin: false, attackMul: 1, charging: 0,
     }
+    // Elites outside the lab carry one affix. The lab keeps its constructs plain.
+    if (elite && !this.opts.lab) {
+      const affix = AFFIX_LIST[Math.floor(this.rng() * AFFIX_LIST.length)]!
+      e.affix = affix
+      if (affix === 'hasted') {
+        e.moveSpeed *= 1.45
+        e.attackMul = 1.35
+      } else if (affix === 'plated') {
+        e.armorGate = Math.max(e.armorGate, 14) + 6
+        e.armorMul = Math.min(e.armorMul, 0.62) * 0.85
+      } else if (affix === 'volatile') {
+        e.explodeOnDeath = { radius: 125, damage: 18 }
+      } else if (!e.pull) e.pull = 560
+    }
+    return e
   }
 
   private burst(x: number, y: number, n: number, color: string, speed: number): void {
@@ -1906,6 +2096,12 @@ export class Simulation implements EffectApi {
 
   private floater(x: number, y: number, text: string, color: string): void {
     this.floaters.push({ x, y, text, life: 0.7, color })
+  }
+
+  /** The time and damage a grade is judged on. */
+  gradeFacts(): { time: number; taken: number } {
+    if (this.gateTime !== null) return { time: this.gateTime, taken: this.gateTaken }
+    return { time: this.time, taken: this.roomDamage }
   }
 
   takeCinders(): number {

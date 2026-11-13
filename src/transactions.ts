@@ -1,6 +1,7 @@
 import { COMPONENT_MAP } from './data/components'
 import { FUSIONS, heatOf } from './data/meta'
 import { buildFor, completeNode, currentBuild, currentNode, DEATH_SOURCES, HIT_SOURCES, keepRatio, noteRarity, salvageValue, synergyLabel, type Offer, type RunState, type ShopItem } from './run'
+import { GRADE_CINDERS, gradeRoom, parTime, type RoomGrade } from './grade'
 import type { SaveData } from './save'
 import type { Simulation } from './sim'
 import type { ComponentDef, FusionRecipe, Pool, RoomType, Slot } from './types'
@@ -150,6 +151,8 @@ export function takeSalvage(run: RunState): RewardResult {
 
 export function buyItem(run: RunState, save: SaveData, item: ShopItem): RewardResult | null {
   if (item.sold || run.cinders < item.cost) return null
+  // A patch at full integrity would take the cinders and do nothing.
+  if (item.kind === 'heal' && run.hp >= currentBuild(run).stats.maxHp - 0.5) return null
   let result: RewardResult
   if (item.kind === 'component' && item.componentId) {
     const report = equip(run, save, item.componentId, ['standard'])
@@ -172,7 +175,7 @@ export function buyItem(run: RunState, save: SaveData, item: ShopItem): RewardRe
 }
 
 export type RoomCommit =
-  | { kind: 'clear'; regen: number; type: RoomType; roomDamage: number; cinders: number }
+  | { kind: 'clear'; regen: number; type: RoomType; roomDamage: number; cinders: number; grade: RoomGrade | null }
   | { kind: 'death'; cause: string; type: RoomType; roomDamage: number; cinders: number }
 
 const committed = new WeakSet<Simulation>()
@@ -196,12 +199,25 @@ export function commitRoom(run: RunState, sim: Simulation): RoomCommit | null {
   const type = sim.room.type
   const node = currentNode(run)
   run.route.push({ nodeId: node?.id ?? 'tutorial', type, room: sim.room.name, taken: Math.round(sim.roomDamage), result: sim.ended === 'clear' ? 'clear' : 'death' })
+  run.rams += sim.rams
+  run.cleanRams += sim.cleanRams
   if (sim.ended === 'dead') return { kind: 'death', cause: sim.cause, type, roomDamage: sim.roomDamage, cinders }
+  // Speed is the weapon: a fast, clean clear is graded and pays a little extra.
+  let grade: RoomGrade | null = null
+  if (!run.tutorial) {
+    const facts = sim.gradeFacts()
+    const par = parTime(sim.room)
+    const g = gradeRoom(facts.time, par, facts.taken, sim.maxHp)
+    const bonus = type === 'boss' ? 0 : GRADE_CINDERS[g]
+    grade = { room: sim.room.name, grade: g, time: Math.round(facts.time * 10) / 10, par, taken: Math.round(facts.taken), bonus }
+    run.grades.push(grade)
+    run.cinders += bonus
+  }
   const heat = heatOf(run.heat)
   const max = sim.maxHp
   const before = run.hp
   run.hp = Math.min(max, run.hp + Math.max(6, max * heat.roomRecovery))
-  return { kind: 'clear', regen: run.hp - before, type, roomDamage: sim.roomDamage, cinders }
+  return { kind: 'clear', regen: run.hp - before, type, roomDamage: sim.roomDamage, cinders, grade }
 }
 
 /** Finish the current map node once. Elite nodes pay one ember into the save. */
@@ -215,8 +231,9 @@ export function finishNode(run: RunState, save: SaveData): { ember: boolean } | 
   return { ember: false }
 }
 
+/** Scrap for a run that ended. The route is longer than it was, so each room pays a little less. */
 export function deathScrap(run: RunState): number {
-  return 4 + run.roomsCleared * 3 + run.elitesKilled * 6
+  return Math.round(4 + run.roomsCleared * 2.4 + run.elitesKilled * 5)
 }
 
 /** Leaving a run pays like a death, but nothing at all before the first room is cleared. */
@@ -225,5 +242,5 @@ export function abandonScrap(run: RunState): number {
 }
 
 export function victoryScrap(run: RunState): number {
-  return 24 + run.roomsCleared * 4 + run.heat * 10
+  return Math.round(24 + run.roomsCleared * 3 + run.heat * 10)
 }

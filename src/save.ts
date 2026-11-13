@@ -51,8 +51,10 @@ export interface SaveData {
   achievements: Record<string, AchievementState>
   heatUnlocked: number
   settings: Settings
-  stats: { runs: number; wins: number; deaths: number; bestCombo: number; bestSpeed: number; bestHit: number }
+  stats: { runs: number; wins: number; deaths: number; bestCombo: number; bestSpeed: number; bestHit: number; bestScore: number; bestGrades: number }
   seenTutorial: boolean
+  /** The Daily Forge: today's key, the best score on it, and how many times it was run. */
+  daily: { key: string; best: number; tries: number; won: boolean } | null
 }
 
 export const SAVE_KEY = 'ballborn-save-v1'
@@ -125,8 +127,9 @@ export function defaultSave(): SaveData {
     achievements,
     heatUnlocked: 0,
     settings: defaultSettings(),
-    stats: { runs: 0, wins: 0, deaths: 0, bestCombo: 0, bestSpeed: 0, bestHit: 0 },
+    stats: { runs: 0, wins: 0, deaths: 0, bestCombo: 0, bestSpeed: 0, bestHit: 0, bestScore: 0, bestGrades: 0 },
     seenTutorial: false,
+    daily: null,
   }
 }
 
@@ -267,14 +270,22 @@ export function sanitizeSave(raw: unknown): { save: SaveData; migrated: boolean 
       bestCombo: num(st.bestCombo, 0, 1e6, 0),
       bestSpeed: num(st.bestSpeed, 0, 1e6, 0),
       bestHit: num(st.bestHit, 0, 1e7, 0),
+      bestScore: Math.floor(num(st.bestScore, 0, 1e8, 0)),
+      bestGrades: Math.floor(num(st.bestGrades, 0, 99, 0)),
     },
     seenTutorial: bool(raw.seenTutorial, false),
+    daily: sanitizeDaily(raw.daily),
   }
   // Achievement unlocks are part of progress: reapply them in case the list was edited.
   for (const a of ACHIEVEMENTS) {
     if (achievements[a.id]!.done && a.unlocks && COMPONENT_MAP[a.unlocks] && !save.unlocked.includes(a.unlocks)) save.unlocked.push(a.unlocks)
   }
   return { save, migrated: version < SAVE_VERSION }
+}
+
+function sanitizeDaily(v: unknown): SaveData['daily'] {
+  if (!isObj(v) || typeof v.key !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v.key)) return null
+  return { key: v.key, best: Math.floor(num(v.best, 0, 1e8, 0)), tries: Math.floor(num(v.tries, 0, 1e5, 0)), won: bool(v.won, false) }
 }
 
 export function loadSave(store: Store = browserStore()): LoadResult {

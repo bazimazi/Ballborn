@@ -92,6 +92,13 @@ export const ENEMIES: EnemyDef[] = deepFreeze([
     question: 'Chains, slams, and explosions are delighted. Hunting them one by one is a tax.',
   },
   {
+    id: 'hound', name: 'Ram Hound', behavior: 'charge', shape: 'hound',
+    hp: 84, r: 19, mass: 1.6, speed: 150, contact: 14,
+    color: '#7a4a32', accent: '#ff8a3a',
+    codex: 'It lowers its head, shakes, and comes. A charge it starts is a charge it cannot steer.',
+    question: 'Hop the charge and it skids, dazed. Meet it head-on at speed and its own run doubles your ram. Lead it into slag and the slag does the work.',
+  },
+  {
     id: 'knight', name: 'Furnace Knight', behavior: 'walk', shape: 'knight',
     hp: 250, r: 26, mass: 2.8, speed: 95, contact: 16,
     color: '#a84832', accent: '#ffd29a',

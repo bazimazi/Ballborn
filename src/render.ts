@@ -1,7 +1,8 @@
 import { art, coverRect, TITLE_BALL } from './assets'
 import { BIOME } from './data/meta'
 import { glowSprite, shade, withAlpha, type Juice } from './juice'
-import { crusherPose, geyserPhase, type LiveEnemy, type Simulation } from './sim'
+import { AFFIXES, crusherPose, geyserPhase, type LiveEnemy, type Simulation } from './sim'
+import { ENEMY_MAP } from './data/enemies'
 import { TUNE } from './tune'
 import type { Stats, VisualDef } from './types'
 import { ballRadius, hopVelocity, horizontalAccel, resolveCircleAabb, verticalAccel, type Body } from './physics'
@@ -14,6 +15,9 @@ export interface Camera {
   shakeX: number
   shakeY: number
   rot: number
+  /** Smoothed look-ahead offsets, so a bounce that flips the ball's velocity does not yank the camera. */
+  lookX?: number
+  lookY?: number
 }
 
 export interface DrawOptions {
@@ -31,6 +35,8 @@ export interface DrawOptions {
   iris: number
   /** End-of-room beat: the ball leaving through the gate, or breaking. */
   outro: { kind: 'clear' | 'dead'; t: number } | null
+  /** Screen point collected cinders fly to (the HUD's cinder counter). */
+  coinTarget?: { x: number; y: number }
 }
 
 const INK = '#120d0a'
@@ -44,17 +50,32 @@ export function ballView(sim: Simulation, alpha: number): { x: number; y: number
   return { x: lerp(sim.prevX, sim.ball.x, alpha), y: lerp(sim.prevY, sim.ball.y, alpha) }
 }
 
-/** Small screens (phones, split windows) zoom out so a room reads the same as on a desktop. */
+/**
+ * Small screens (phones, split windows) zoom out so enough of a room shows.
+ * Not all the way to the desktop view, though: on a phone that leaves the
+ * ball a few pixels wide. Off-screen arrows cover what falls outside.
+ */
 export function fitZoom(viewW: number, viewH: number): number {
-  return clamp(Math.min(viewW / 1100, viewH / 640), 0.5, 1)
+  return clamp(Math.min(viewW / 980, viewH / 560), 0.55, 1)
 }
 
-export function updateCamera(cam: Camera, sim: Simulation, dt: number, viewW: number, viewH: number, motion: boolean, alpha: number): void {
+/**
+ * `edgePad` is screen space (CSS pixels) the camera may show past each side
+ * wall. On touch screens the stick and the hop button sit over the corners, so
+ * without it the ball spawns under a thumb and the exit gate hides under hop.
+ */
+export function updateCamera(cam: Camera, sim: Simulation, dt: number, viewW: number, viewH: number, motion: boolean, alpha: number, edgePad = 0): void {
   const b = ballView(sim, alpha)
   // Look ahead in the direction of travel so a fast ball can see where it will stop or land.
   const look = motion ? 0.22 : 0.1
-  const lookX = b.x + clamp(sim.ball.vx * look, -viewW * 0.22, viewW * 0.22)
-  const lookY = b.y + clamp(sim.ball.vy * 0.06, -40, 90) - 30
+  // The look-ahead itself eases (a ram or wall bounce flips vx in one tick), and vertical look-ahead
+  // is gentler still, so a bouncing ball does not bob the whole view.
+  const wantX = clamp(sim.ball.vx * look, -viewW * 0.22, viewW * 0.22)
+  const wantY = clamp(sim.ball.vy * 0.05, -30, 70)
+  cam.lookX = (cam.lookX ?? wantX) + (wantX - (cam.lookX ?? wantX)) * (1 - Math.exp(-3 * dt))
+  cam.lookY = (cam.lookY ?? wantY) + (wantY - (cam.lookY ?? wantY)) * (1 - Math.exp(-2 * dt))
+  const lookX = b.x + cam.lookX
+  const lookY = b.y + cam.lookY - 30
   const k = 1 - Math.exp(-5.5 * dt)
   cam.x += (lookX - cam.x) * k
   cam.y += (lookY - cam.y) * k
@@ -63,7 +84,8 @@ export function updateCamera(cam: Camera, sim: Simulation, dt: number, viewW: nu
   cam.zoom += (target - cam.zoom) * (1 - Math.exp(-2.4 * dt))
   const halfW = viewW / (2 * cam.zoom)
   const halfH = viewH / (2 * cam.zoom)
-  cam.x = clamp(cam.x, Math.min(halfW, sim.room.width / 2), Math.max(sim.room.width / 2, sim.room.width - halfW))
+  const padW = edgePad / cam.zoom
+  cam.x = clamp(cam.x, Math.min(halfW - padW, sim.room.width / 2), Math.max(sim.room.width / 2, sim.room.width - halfW + padW))
   cam.y = clamp(cam.y, Math.min(halfH, sim.room.height / 2) - 60, Math.max(sim.room.height / 2, sim.room.height - halfH + 40))
 }
 
@@ -85,10 +107,135 @@ export function viewRect(cam: Camera, w: number, h: number): { x: number; y: num
   return { x: cam.x - vw / 2, y: cam.y - vh / 2, w: vw, h: vh }
 }
 
+/**
+ * Arrows at the screen edge for constructs the camera cannot see, so a fast
+ * ball never rams into something it had no chance to read. A wind-up makes
+ * the arrow pulse red.
+ */
+function drawOffscreen(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camera, w: number, h: number, o: DrawOptions): void {
+  if (sim.done) return
+  const pad = 30
+  for (const e of sim.enemies) {
+    if (!e.alive) continue
+    const p = worldToScreen(cam, e.x, e.y, w, h)
+    const m = e.r * cam.zoom
+    if (p.x > -m && p.x < w + m && p.y > -m && p.y < h + m) continue
+    const cx = clamp(p.x, pad, w - pad)
+    // Below the HUD's top row (integrity, currencies, buttons), which is about 60 px tall on every screen.
+    const cy = clamp(p.y, Math.min(h / 2, pad + 64), Math.max(h / 2, h - pad - 40))
+    const ang = Math.atan2(p.y - cy, p.x - cx)
+    const dist = hypot(e.x - sim.ball.x, e.y - sim.ball.y) // ball position: close enough for a fade
+    const near = clamp(1 - dist / 1400, 0.25, 1)
+    const warn = e.windup > 0 || e.charging > 0
+    const color = warn ? '#ff5d4a' : e.affix ? '#ffd15c' : e.elite ? '#ffd15c' : '#ffb15a'
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.rotate(ang)
+    ctx.globalAlpha = near * (warn ? 0.6 + 0.4 * Math.sin(o.time * 18) : 0.9)
+    const s = 9 + near * 6 + (e.elite ? 3 : 0)
+    ctx.fillStyle = color
+    ctx.strokeStyle = INK
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.moveTo(s, 0)
+    ctx.lineTo(-s * 0.7, -s * 0.75)
+    ctx.lineTo(-s * 0.35, 0)
+    ctx.lineTo(-s * 0.7, s * 0.75)
+    ctx.closePath()
+    ctx.stroke()
+    ctx.fill()
+    ctx.restore()
+  }
+}
+
 // =============================================================================
 // World.
 
+type Lerpable = { x: number; y: number; px?: number; py?: number }
+const lerpStash: number[] = []
+const lerpList: Lerpable[] = []
+/** Past this in one tick something teleported (a blink, a respawn): draw it where it is. */
+const TELEPORT = 120
+
+/**
+ * Moves every entity to where it was `alpha` of the way through the latest
+ * tick, for drawing only. The simulation runs in fixed ticks while frames
+ * arrive at the display's own rate; without this, constructs, bolts, and
+ * loot advance in uneven jumps against the smoothly interpolated camera.
+ * `restoreTicks` must run before the simulation steps again.
+ */
+function interpolateTicks(sim: Simulation, alpha: number): void {
+  lerpList.length = 0
+  lerpStash.length = 0
+  for (const e of sim.enemies) lerpList.push(e)
+  for (const b of sim.bullets) lerpList.push(b)
+  for (const p of sim.pickups) lerpList.push(p)
+  if (sim.boss) {
+    lerpList.push(sim.boss)
+    for (const r of sim.boss.rivets) lerpList.push(r)
+  }
+  const back = 1 - alpha
+  for (const o of lerpList) {
+    lerpStash.push(o.x, o.y)
+    if (o.px === undefined || o.py === undefined) continue
+    const dx = o.x - o.px
+    const dy = o.y - o.py
+    if (Math.abs(dx) + Math.abs(dy) > TELEPORT) continue
+    o.x -= dx * back
+    o.y -= dy * back
+  }
+  // Moving platforms keep their start-of-tick position in frameX/frameY.
+  for (const s of sim.solids) {
+    lerpStash.push(s.x, s.y)
+    if (!s.move) continue
+    s.x -= (s.x - s.frameX) * back
+    s.y -= (s.y - s.frameY) * back
+  }
+  // Sparks fly in straight lines between ticks; floaters drift up at a fixed rate.
+  const dt = TUNE.fixedDt * back
+  for (const p of sim.particles) {
+    lerpStash.push(p.x, p.y)
+    p.x -= p.vx * dt
+    p.y -= p.vy * dt
+  }
+  for (const f of sim.floaters) {
+    lerpStash.push(f.y)
+    f.y += 28 * dt
+  }
+  lerpStash.push(sim.time)
+  sim.time -= dt
+}
+
+function restoreTicks(sim: Simulation): void {
+  let i = 0
+  for (const o of lerpList) {
+    o.x = lerpStash[i++]!
+    o.y = lerpStash[i++]!
+  }
+  for (const s of sim.solids) {
+    s.x = lerpStash[i++]!
+    s.y = lerpStash[i++]!
+  }
+  for (const p of sim.particles) {
+    p.x = lerpStash[i++]!
+    p.y = lerpStash[i++]!
+  }
+  for (const f of sim.floaters) f.y = lerpStash[i++]!
+  sim.time = lerpStash[i++]!
+  lerpList.length = 0
+  lerpStash.length = 0
+}
+
 export function drawWorld(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camera, viewW: number, viewH: number, o: DrawOptions): void {
+  interpolateTicks(sim, o.alpha)
+  try {
+    drawWorldAt(ctx, sim, cam, viewW, viewH, o)
+  } finally {
+    restoreTicks(sim)
+  }
+}
+
+function drawWorldAt(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camera, viewW: number, viewH: number, o: DrawOptions): void {
   const juice = o.juice
   drawBackdrop(ctx, sim, cam, viewW, viewH, o)
 
@@ -110,7 +257,12 @@ export function drawWorld(ctx: CanvasRenderingContext2D, sim: Simulation, cam: C
   const collapsing = !!sim.boss && sim.boss.collapse > 0
   const lava = sim.hazards.filter((h) => h.type === 'lava')
   for (const s of sim.solids) {
-    if (!s.alive || s.bounds) continue
+    if (!s.alive) continue
+    if (s.bounds) {
+      // Side walls only show when the camera looks past a room edge (touch screens).
+      if (s.h > s.w) drawBoundWall(ctx, s.x, s.w, s.x < 0, sim.room.height, o.contrast)
+      continue
+    }
     const hot = lava.some((l) => l.x < s.x + s.w + 60 && l.x + l.w > s.x - 60 && l.y > s.y && l.y - s.y < 260)
     drawBeam(ctx, s.x, s.y, s.w, s.h, s.kind, sim.time, o.contrast, hot)
     if (collapsing && s.breakable) drawCollapseWarning(ctx, s, sim.boss!.collapse, sim.time)
@@ -250,8 +402,14 @@ function drawBackdrop(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camer
     ctx.drawImage(img, r.x, r.y, r.w, r.h)
     ctx.globalAlpha = 1
   }
-  if (!midLayer || midLayer.h !== h) midLayer = { canvas: buildMidLayer(h), h }
-  const off = -((cam.x * 0.28) % MID_W) - MID_W
+  // Built a little taller than needed and in steps, so a phone's URL bar sliding in and out does not rebuild it.
+  if (!midLayer || midLayer.h < h || midLayer.h > h + 192) {
+    const mh = Math.ceil(h / 96) * 96 + 96
+    midLayer = { canvas: buildMidLayer(mh), h: mh }
+  }
+  // The first tile starts at or left of the screen edge, never a whole tile off-screen.
+  let off = -((cam.x * 0.28) % MID_W)
+  if (off > 0) off -= MID_W
   ctx.globalAlpha = 0.6
   for (let x = off; x < w; x += MID_W) ctx.drawImage(midLayer.canvas, x, (-cam.y + 400) * 0.08)
   ctx.globalAlpha = 1
@@ -459,6 +617,33 @@ function drawCrusher(ctx: CanvasRenderingContext2D, h: { x: number; y: number; w
     ctx.lineTo(px + 16, pose.y + h.h)
   }
   ctx.fill()
+}
+
+/** The foundry wall past a room's edge: solid iron, a lit inner face, and depth that fades out. */
+function drawBoundWall(ctx: CanvasRenderingContext2D, x: number, w: number, left: boolean, roomH: number, contrast: boolean): void {
+  const depth = 1600
+  const face = left ? x + w : x
+  const x0 = left ? face - depth : face
+  const top = -600
+  const bottom = roomH + 600
+  if (contrast) {
+    ctx.fillStyle = '#000'
+    ctx.fillRect(x0, top, depth, bottom - top)
+  } else {
+    const g = ctx.createLinearGradient(face, 0, left ? face - 260 : face + 260, 0)
+    g.addColorStop(0, '#2a231d')
+    g.addColorStop(0.25, '#1a1511')
+    g.addColorStop(1, '#0d0a08')
+    ctx.fillStyle = g
+    ctx.fillRect(x0, top, depth, bottom - top)
+    // Rivet seams so the wall reads as built, not as missing art.
+    ctx.fillStyle = 'rgba(0,0,0,0.45)'
+    for (let y = top + 40; y < bottom; y += 96) ctx.fillRect(left ? face - 90 : face, y, 90, 2)
+  }
+  ctx.fillStyle = BONE
+  ctx.globalAlpha = 0.5
+  ctx.fillRect(left ? face - 3 : face, top, 3, bottom - top)
+  ctx.globalAlpha = 1
 }
 
 function drawBeam(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, kind: string, time: number, contrast: boolean, hot: boolean): void {
@@ -736,7 +921,8 @@ function drawBullet(ctx: CanvasRenderingContext2D, b: Simulation['bullets'][numb
 }
 
 function drawSimParticles(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions): void {
-  const limit = Math.round(sim.particles.length * o.particles)
+  // The particles setting already scales how many the simulation spawns (sim.fxLevel).
+  const limit = sim.particles.length
   ctx.save()
   ctx.globalCompositeOperation = o.contrast ? 'source-over' : 'lighter'
   ctx.lineCap = 'round'
@@ -852,6 +1038,14 @@ function enemyPath(ctx: CanvasRenderingContext2D, shape: LiveEnemy['shape'], r: 
     ctx.arc(0, 0, r * (0.85 + Math.sin(time * 6) * 0.08), 0, Math.PI * 2)
   } else if (shape === 'turret') {
     ctx.roundRect(-r, -r * 0.4, r * 2, r * 1.2, 4)
+  } else if (shape === 'hound') {
+    // A low battering wedge: heavy brow forward, haunches back.
+    ctx.moveTo(-r * 1.1, r * 0.75)
+    ctx.lineTo(-r * 1.05, -r * 0.35)
+    ctx.quadraticCurveTo(-r * 0.6, -r * 0.95, r * 0.25, -r * 0.8)
+    ctx.lineTo(r * 1.15, -r * 0.2)
+    ctx.lineTo(r * 1.1, r * 0.75)
+    ctx.closePath()
   } else if (shape === 'shard') {
     ctx.moveTo(0, -r)
     ctx.lineTo(r * 0.8, -r * 0.1)
@@ -874,17 +1068,34 @@ function drawEnemy(ctx: CanvasRenderingContext2D, e: LiveEnemy, sim: Simulation,
   const bob = e.flying ? Math.sin(time * 3 + e.uid) * 3 : moving ? -Math.abs(Math.sin(time * 9 + e.uid)) * 2.5 : 0
   ctx.translate(e.x, e.y + bob)
   const shake = e.windup > 0 ? Math.sin(time * 70) * 1.5 : 0
-  ctx.translate(shake, 0)
+  // Victim shake: the struck construct rattles during the hit pause (real time, since the sim is frozen).
+  const struck = o.motion && e.hitFlash > 0 ? Math.sin(o.time * 95 + e.uid) * 3.2 * clamp(e.hitFlash / 0.08, 0, 1) : 0
+  ctx.translate(shake + (e.flying ? 0 : struck), e.flying ? struck : 0)
   ctx.rotate(clamp(e.vx / 900, -0.22, 0.22))
   // Squash on hit, a slow breath at rest.
   const hf = clamp(e.hitFlash / 0.08, 0, 1)
   const breath = 1 + Math.sin(time * 2.4 + e.uid) * 0.025
   ctx.scale(pop * (1 + 0.3 * hf) * breath, pop * (1 - 0.24 * hf) / breath)
+  // The hound's wedge points where it will run.
+  if (e.shape === 'hound') ctx.scale(e.facing < 0 ? -1 : 1, 1)
   if (e.elite && !o.contrast) {
     ctx.save()
     ctx.globalCompositeOperation = 'lighter'
     ctx.globalAlpha = 0.35 + 0.1 * Math.sin(time * 4)
-    ctx.drawImage(glowSprite('#ffd15c'), -r * 2, -r * 2, r * 4, r * 4)
+    ctx.drawImage(glowSprite(e.affix ? AFFIXES[e.affix].color : '#ffd15c'), -r * 2, -r * 2, r * 4, r * 4)
+    ctx.restore()
+  }
+  if (e.affix) {
+    // The affix reads by shape too: a rotating dashed ring in the affix colour.
+    ctx.save()
+    ctx.rotate(time * (e.affix === 'hasted' ? 3 : 1.2))
+    ctx.setLineDash(e.affix === 'plated' ? [10, 4] : e.affix === 'volatile' ? [3, 5] : e.affix === 'magnetic' ? [14, 8] : [6, 6])
+    ctx.lineWidth = 2.5
+    ctx.strokeStyle = AFFIXES[e.affix].color
+    ctx.globalAlpha = 0.85
+    ctx.beginPath()
+    ctx.arc(0, 0, r + 7 + (e.affix === 'volatile' ? Math.sin(time * 9) * 2 : 0), 0, Math.PI * 2)
+    ctx.stroke()
     ctx.restore()
   }
   if (e.shape === 'wisp' && !o.contrast) {
@@ -925,6 +1136,34 @@ function drawEnemy(ctx: CanvasRenderingContext2D, e: LiveEnemy, sim: Simulation,
     ctx.lineTo(3, r * 0.3)
     ctx.lineTo(0, r)
     ctx.stroke()
+  }
+  if (e.shape === 'hound') {
+    // Horns forward; chevrons ahead of it while it winds up, so the charge is never a surprise.
+    ctx.fillStyle = '#e7d6bf'
+    ctx.strokeStyle = INK
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(r * 0.55, -r * 0.62)
+    ctx.quadraticCurveTo(r * 1.5, -r * 1.05, r * 1.55, -r * 0.35)
+    ctx.quadraticCurveTo(r * 1.15, -r * 0.55, r * 0.8, -r * 0.35)
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+    if (e.windup > 0 || e.charging > 0) {
+      const t = e.charging > 0 ? 1 : 1 - clamp(e.windup / 0.62, 0, 1)
+      ctx.strokeStyle = e.charging > 0 ? '#ffd15c' : '#ff5d4a'
+      ctx.lineWidth = 3.5
+      for (let i = 0; i < 3; i++) {
+        const x = r * 1.7 + i * 13 + (time * 60) % 13
+        ctx.globalAlpha = (0.35 + t * 0.65) * (1 - i * 0.25)
+        ctx.beginPath()
+        ctx.moveTo(x, -r * 0.45)
+        ctx.lineTo(x + 8, 0)
+        ctx.lineTo(x, r * 0.45)
+        ctx.stroke()
+      }
+      ctx.globalAlpha = 1
+    }
   }
   if (e.shape === 'cask') {
     // A fuse that sparks: this one explodes.
@@ -1046,7 +1285,7 @@ function drawEnemy(ctx: CanvasRenderingContext2D, e: LiveEnemy, sim: Simulation,
     ctx.textAlign = 'center'
     ctx.lineWidth = 3
     ctx.strokeStyle = INK
-    const letter = e.name.slice(e.elite ? 6 : 0, (e.elite ? 6 : 0) + 1)
+    const letter = (ENEMY_MAP[e.defId]?.name ?? e.name).slice(0, 1)
     ctx.strokeText(letter, 0, r * 0.75)
     ctx.fillStyle = '#fff'
     ctx.fillText(letter, 0, r * 0.75)
@@ -1065,6 +1304,7 @@ function drawEnemy(ctx: CanvasRenderingContext2D, e: LiveEnemy, sim: Simulation,
     ctx.beginPath()
     ctx.roundRect(e.x - w / 2, y, w * pct, 4, 2)
     ctx.fill()
+    if (e.affix) worldText(ctx, AFFIXES[e.affix].label, e.x, y - 8, 11, AFFIXES[e.affix].color)
   }
 }
 
@@ -1411,7 +1651,8 @@ function drawBall(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   ctx.save()
   // Tapered trail, hotter once the ball is fast enough to ram cleanly.
   if (sim.trail.length > 1 && sp > 80) {
-    const pts = [...sim.trail, view]
+    // The newest trail point is the end of the latest tick; the drawn ball is between ticks.
+    const pts = [...sim.trail.slice(0, -1), view]
     ctx.lineCap = 'round'
     if (armed && !o.contrast) ctx.globalCompositeOperation = 'lighter'
     for (let i = 1; i < pts.length; i++) {
@@ -1490,7 +1731,7 @@ function drawBall(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   ctx.beginPath()
   ctx.arc(0, 0, r - 1, 0, Math.PI * 2)
   ctx.clip()
-  ctx.rotate(b.spin)
+  ctx.rotate(lerp(sim.prevSpin, b.spin, o.alpha))
   ctx.strokeStyle = 'rgba(20, 10, 6, 0.45)'
   ctx.lineWidth = 2
   ctx.beginPath()
@@ -1520,7 +1761,7 @@ function drawBall(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   ctx.strokeStyle = o.contrast ? '#ffffff' : v.shell
   ctx.lineWidth = 3.5
   ctx.stroke()
-  if (v.pattern === 'spikes') drawSpikeRing(ctx, v, r, b.spin)
+  if (v.pattern === 'spikes') drawSpikeRing(ctx, v, r, lerp(sim.prevSpin, b.spin, o.alpha))
   ctx.strokeStyle = 'rgba(255, 246, 234, 0.6)'
   ctx.lineWidth = 1.5
   ctx.beginPath()
@@ -1658,6 +1899,7 @@ function drawScreenFx(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camer
   v.addColorStop(1, 'rgba(0,0,0,0.5)')
   ctx.fillStyle = v
   ctx.fillRect(0, 0, w, h)
+  drawOffscreen(ctx, sim, cam, w, h, o)
   // Speed lines when the ball is near its top speed.
   const sp = hypot(sim.ball.vx, sim.ball.vy)
   const ratio = sp / Math.max(1, sim.stats.maxSpeed)
@@ -1683,7 +1925,8 @@ function drawScreenFx(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camer
   }
   if (sim.lowHp && !sim.done) {
     const beat = 0.75 + 0.25 * Math.pow(Math.abs(Math.sin(o.time * 2.6)), 6)
-    const g = ctx.createRadialGradient(w / 2, h / 2, w * 0.3, w / 2, h / 2, w * 0.72)
+    // Sized to the screen's diagonal, so a portrait phone gets a vignette rather than solid red bands.
+    const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.hypot(w, h) * 0.5)
     g.addColorStop(0, 'rgba(0,0,0,0)')
     g.addColorStop(1, `rgba(110, 18, 18, ${0.5 * beat})`)
     ctx.fillStyle = g
@@ -1696,7 +1939,7 @@ function drawScreenFx(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camer
     ctx.fillStyle = g
     ctx.fillRect(0, 0, w, h)
   }
-  juice.drawCoins(ctx, (x, y) => worldToScreen(cam, x, y, w, h), { x: w - 70, y: 24 })
+  juice.drawCoins(ctx, (x, y) => worldToScreen(cam, x, y, w, h), o.coinTarget ?? { x: w - 70, y: 24 })
   if (o.flash > 0) {
     ctx.fillStyle = `rgba(255, 240, 220, ${clamp(o.flash, 0, 0.28)})`
     ctx.fillRect(0, 0, w, h)
@@ -1720,7 +1963,8 @@ function drawScreenFx(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camer
     }
   }
   if (o.iris < 1) {
-    const b = worldToScreen(cam, sim.ball.x, sim.ball.y, w, h)
+    const bv = ballView(sim, o.alpha)
+    const b = worldToScreen(cam, bv.x, bv.y, w, h)
     const max = Math.hypot(Math.max(b.x, w - b.x), Math.max(b.y, h - b.y)) + 20
     const e = o.iris * o.iris * (3 - 2 * o.iris)
     ctx.fillStyle = '#0b0908'
@@ -1828,6 +2072,8 @@ export class CardPreview {
   private groundA = false
   private groundB = false
   private trailB: { x: number; y: number }[] = []
+  /** Real time not yet simulated: the preview runs at the same pace on 60, 90, and 144 Hz screens. */
+  private acc = 0
 
   constructor(
     public before: Stats,
@@ -1890,8 +2136,9 @@ export class CardPreview {
     }
     const scale = h / 340
     const worldW = w / scale
-    const steps = Math.min(8, Math.max(1, Math.round(dt / (1 / 120))))
-    for (let i = 0; i < steps; i++) {
+    this.acc = Math.min(this.acc + Math.max(0, dt), 8 / 120)
+    while (this.acc >= 1 / 120) {
+      this.acc -= 1 / 120
       this.t += 1 / 120
       const input = this.input(this.t)
       this.groundA = this.advance(this.a, this.before, this.groundA, 1 / 120, input, worldW)

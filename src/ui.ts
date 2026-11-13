@@ -7,6 +7,7 @@ import { feelNumbers } from './build'
 import type { CompiledBuild, DamageSource, HitSource, Stats } from './types'
 import { SLOTS, type Slot } from './types'
 import type { GameEvent } from './events'
+import type { RoomGrade } from './grade'
 import { previewSwap, routeInfo, salvageValue, type MapNode, type Offer, type RouteStep, type RunState, type ShopItem } from './run'
 import type { SaveData, Btn } from './save'
 import { BTNS, DEFAULT_BINDINGS } from './save'
@@ -40,6 +41,13 @@ export interface RunSummary {
   seed: number
   heat: number
   line: string
+  score: number
+  scoreLines: { label: string; points: number }[]
+  newBest: boolean
+  grades: RoomGrade[]
+  daily: string | null
+  /** Plain text for the clipboard: the day, the score, the grade strip. */
+  share: string
 }
 
 export interface View {
@@ -67,6 +75,8 @@ export interface View {
   /** Map room picked on a touch screen, shown before entering. */
   selectedNode: string | null
   confirmErase: boolean
+  /** Today's Daily Forge key. */
+  dailyKey: string
 }
 
 export const SLOT_LABEL: Record<Slot, string> = {
@@ -122,7 +132,9 @@ export class Hud {
     const key = `${id}.${prop}`
     if (this.last.get(key) === value) return
     this.last.set(key, value)
-    this.el(id).style[prop] = value
+    // Bars fill with a transform, not a width: no layout every frame, and the compositor animates it.
+    if (prop === 'width') this.el(id).style.transform = `scaleX(${(Math.max(0, Math.min(100, parseFloat(value) || 0)) / 100).toFixed(3)})`
+    else this.el(id).style[prop] = value
   }
 
   private attr(id: string, name: string, value: string): void {
@@ -445,14 +457,14 @@ function titleHtml(view: View): string {
         ${view.saveWarning ? `<p class="warn" role="status">${svg('warning', 18)} ${esc(view.saveWarning)}</p>` : ''}
         <nav class="title-menu" aria-label="Main menu">
           ${cont ? `<button class="btn primary big" data-act="continue" data-autofocus>${svg('resume', 24)}<span>Continue</span></button>` : ''}
-          <button class="btn big ${cont ? '' : 'primary'}" data-act="launch" data-arg="run" ${cont ? '' : 'data-autofocus'}>${svg(cont ? 'plus' : 'play', 24)}<span>${cont ? 'New run' : 'Launch run'}</span></button>
+          <button class="btn big ${cont ? '' : 'primary'}" data-act="launch" data-arg="run" ${cont ? '' : 'data-autofocus'}>${svg(cont ? 'plus' : 'play', 24)}<span>${cont ? 'New run' : view.save.seenTutorial ? 'Launch run' : 'Play'}</span></button>
+          ${view.save.seenTutorial ? dailyButton(view) : ''}
         </nav>
         <div class="tiles" role="group" aria-label="More">
           ${tile('launch', 'flame', view.save.seenTutorial ? 'Tutorial' : 'Ignition', view.save.seenTutorial ? 'Replay first ignition' : 'First ignition', 'data-arg="tutorial"')}
           ${tile('lab', 'flask', 'Lab', 'Ball lab')}
           ${tile('codex', 'book', 'Codex')}
           ${tile('settings', 'gear', 'Settings')}
-          ${view.canFullscreen && view.touch ? tile('fullscreen', 'fullscreen', 'Full', 'Full screen') : ''}
         </div>
         ${heat > 0 ? `<div class="heat-row"><div class="row" role="group" aria-label="Forge heat">${heats}</div>
           <ul class="heat-list">${picked.effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
@@ -467,10 +479,19 @@ function titleHtml(view: View): string {
           ${currencies(view.save, null)}
           ${chip(svg('trophy', 18), `${view.save.stats.wins}`, `${view.save.stats.wins} wins`)}
           ${chip(svg('flag', 18), `${view.save.stats.runs}`, `${view.save.stats.runs} runs`)}
+          ${view.canFullscreen && view.touch ? iconBtn('fullscreen', 'fullscreen', 'Full screen', 'data-fs') : ''}
         </div>
       </div>
     </div>
   </div>`
+}
+
+/** The Daily Forge: one shared route per day, scored. */
+function dailyButton(view: View): string {
+  const key = view.dailyKey
+  const d = view.save.daily?.key === key ? view.save.daily : null
+  const best = d && d.tries ? `best ${d.best.toLocaleString('en-US')}${d.won ? ' ★' : ''}` : 'not yet run'
+  return `<button class="btn big daily" data-act="launch" data-arg="daily" aria-label="${esc(`Daily Forge for ${key}, ${best}`)}">${svg('star', 22)}<span>Daily Forge</span><small>${esc(key)} · ${esc(best)}</small></button>`
 }
 
 function settingsHtml(view: View): string {
@@ -500,7 +521,7 @@ function settingsHtml(view: View): string {
       </div>`
     : `<div class="row"><button class="btn danger tiny" data-act="reset-save">${svg('trash', 16)} Erase progress…</button></div>`
   return `<div class="panel stack scroll settings">
-    ${header('Settings', '', { back: 'close' })}
+    <div class="sticky-head">${header('Settings', '', { back: 'close' })}</div>
     <div class="settings-grid">
       <section class="stack">
         <h3>${svg('motion', 20)} Motion</h3>
@@ -607,8 +628,8 @@ function codexHtml(view: View): string {
     }).join('')}</div>`
   }
   return `<div class="panel stack scroll codex">
-    ${header('Codex', '', { back: 'close', right: currencies(view.save, null) })}
-    <div class="tabs" role="group" aria-label="Codex sections">${tabs}</div>${body}</div>`
+    <div class="sticky-head">${header('Codex', '', { back: 'close', right: currencies(view.save, null) })}
+    <div class="tabs" role="group" aria-label="Codex sections">${tabs}</div></div>${body}</div>`
 }
 
 const NODE_W = 116
@@ -693,6 +714,7 @@ function nodeInfo(n: MapNode, build: CompiledBuild, run: RunState): string {
       <b>${esc(info.label)}</b>
       <span class="small"><span class="down">${svg('warning', 14)}</span> ${esc(info.risk)}</span>
       <span class="small"><span class="up">${svg('plus', 14)}</span> ${esc(info.reward)}</span>
+      ${info.advice ? `<span class="small advice">${esc(info.advice)}</span>` : ''}
     </div>
     <button class="btn primary go" data-act="enter" data-arg="${n.id}" data-go="1" aria-label="Enter ${esc(info.label)}">${svg('play', 22)}<span>Go</span></button>
   </div>`
@@ -717,9 +739,26 @@ function rewardHtml(view: View): string {
   const rerolls = run?.rerolls ?? 0
   const actions = `<button class="btn icon-btn badge-btn" data-act="reroll" ${rerolls > 0 ? '' : 'disabled'} aria-label="Reroll (${rerolls} tokens)" title="Reroll (${rerolls} tokens)">${svg('dice')}<span class="badge">${rerolls}</span></button>
     ${run?.tutorial ? '' : `<button class="btn salvage" data-act="salvage" aria-label="Keep the ball and take ${salvage} cinders" title="Keep the ball: +${salvage} cinders">${svg('recycle', 20)}${icon('currency-cinders', 18)}<b>+${salvage}</b></button>`}`
+  const g = run && !run.tutorial && run.offerKind !== 'treasure' ? run.grades[run.grades.length - 1] : undefined
+  const gradeLine = g ? gradeBadge(g) : ''
   return `<div class="panel stack scroll reward">
     ${header('Choose one', '', { right: actions })}
+    ${gradeLine}
     <div class="cards">${view.offers.map((o, i) => offerCard(o, i, view)).join('')}</div>
+  </div>`
+}
+
+/** The room's grade, stamped on the reward screen: pace against par, and the shell. */
+export function gradeBadge(g: RoomGrade): string {
+  const pace = g.time <= g.par ? 'up' : 'down'
+  const shell = g.taken <= 0 ? 'up' : 'down'
+  return `<div class="grade-line" data-grade="${g.grade}" role="status" aria-label="${esc(`${g.room}: grade ${g.grade}. ${g.time} seconds, par ${g.par}. ${g.taken ? `${g.taken} integrity lost` : 'No damage'}.${g.bonus ? ` ${g.bonus} bonus cinders.` : ''}`)}">
+    <span class="grade-stamp" aria-hidden="true">${g.grade}</span>
+    <span class="grade-facts"><b>${esc(g.room)}</b>
+      <span class="${pace}">${svg('hourglass', 14)} ${g.time.toFixed(1)} s <span class="muted">/ par ${g.par}</span></span>
+      <span class="${shell}">${svg('heart', 14)} ${g.taken ? `−${g.taken}` : 'untouched'}</span>
+      ${g.bonus ? `<span class="pay">${icon('currency-cinders', 14)} +${g.bonus}</span>` : ''}
+    </span>
   </div>`
 }
 
@@ -746,9 +785,14 @@ function offerCard(o: Offer, i: number, view: View): string {
   const chips = [
     ...(o.gained ?? []).map((g) => `<span class="tag up">${svg('link', 14)}${esc(g)}</span>`),
     ...(o.lost ?? []).map((l) => `<span class="tag down">${svg('unlink', 14)}${esc(l)}</span>`),
+    ...(o.near ?? []).map((n) => `<span class="tag near" title="One part away from this reaction">${svg('link', 14)}${esc(n)}</span>`),
   ].join('')
+  const banishes = view.run?.banishes ?? 0
+  const banish = o.kind === 'component' && view.run && !view.run.tutorial
+    ? `<button class="btn icon-btn banish" data-act="banish" data-arg="${i}" ${banishes > 0 ? '' : 'disabled'} aria-label="Banish ${esc(o.title)} for this run (${banishes} left)" title="Banish for this run (${banishes} left)">${svg('close', 16)}</button>`
+    : ''
   return `<article class="card kind-${o.kind}" data-rarity="${o.rarity ?? 'common'}" style="--i:${i}" title="${esc(o.description)}">
-    <div class="card-head">${icon(art, 30)}<div class="rarity ${o.rarity ?? ''}">${o.slot ? SLOT_LABEL[o.slot] : o.kind}${o.rarity ? ` · ${o.rarity}` : ''}</div>${tradeoff ? `<span class="trade" title="Trade-off">${svg('swap', 16)}</span>` : ''}<span class="card-key kbd" aria-hidden="true">${i + 1}</span></div>
+    <div class="card-head">${icon(art, 30)}<div class="rarity ${o.rarity ?? ''}">${o.slot ? SLOT_LABEL[o.slot] : o.kind}${o.rarity ? ` · ${o.rarity}` : ''}</div>${tradeoff ? `<span class="trade" title="Trade-off">${svg('swap', 16)}</span>` : ''}<span class="card-key kbd" aria-hidden="true">${i + 1}</span>${banish}</div>
     <div class="card-body">
     ${o.kind === 'component' ? `<canvas data-preview="${i}" width="280" height="110" aria-hidden="true"></canvas>` : ''}
     <strong class="card-title">${esc(o.title)}</strong>
@@ -792,8 +836,9 @@ function shopHtml(view: View): string {
       if (Math.round(p.hp.maxAfter) !== Math.round(p.hp.maxBefore)) chips.push(`<span class="tag ${p.hp.maxAfter > p.hp.maxBefore ? 'up' : 'down'}">${svg('heart', 14)}${Math.round(p.hp.maxBefore)} → ${Math.round(p.hp.maxAfter)}</span>`)
     }
     const short = cinders < item.cost && !item.sold ? item.cost - cinders : 0
-    const label = `${item.title}. ${item.sold ? 'Sold.' : `${item.cost} cinders${short ? `, need ${short} more` : ''}.`} ${item.detail}`
-    return `<button class="btn shop-item kind-${item.kind} ${item.sold ? 'sold' : ''}" data-rarity="${rarity}" data-act="buy" data-arg="${item.id}" ${item.sold || short ? 'disabled' : ''} aria-label="${esc(label)}">
+    const whole = item.kind === 'heal' && !item.sold && !!view.run && !!view.build && view.run.hp >= view.build.stats.maxHp - 0.5
+    const label = `${item.title}. ${item.sold ? 'Sold.' : whole ? 'Your shell is already whole.' : `${item.cost} cinders${short ? `, need ${short} more` : ''}.`} ${item.detail}`
+    return `<button class="btn shop-item kind-${item.kind} ${item.sold ? 'sold' : ''}" data-rarity="${rarity}" data-act="buy" data-arg="${item.id}" ${item.sold || short || whole ? 'disabled' : ''} aria-label="${esc(label)}">
       <span class="si-icon">${shopIcon(item)}</span>
       <span class="si-body"><b>${esc(item.title)}</b>${item.kind === 'component' ? '' : `<span class="small muted">${esc(item.detail)}</span>`}${chips.length ? `<span class="chips">${chips.join('')}</span>` : ''}</span>
       <span class="price">${item.sold ? svg('check', 18) : `${short ? svg('lock', 14) : ''}${icon('currency-cinders', 18)}<b>${item.cost}</b>`}</span>
@@ -863,6 +908,12 @@ function summaryHtml(view: View): string {
     <div class="kicker">${s.kind === 'victory' ? 'The Colossus is scrap' : s.kind === 'abandon' ? 'Run abandoned' : 'The ball breaks'}</div>
     <h2 class="summary-title">${svg(s.kind === 'victory' ? 'trophy' : s.kind === 'abandon' ? 'flag' : 'skull', 34)} ${esc(s.title)}</h2>
     ${s.cause ? `<p class="cause" aria-label="Cause: ${esc(s.cause)}">${svg('skull', 18)}<b>${esc(s.cause)}</b></p>` : ''}
+    <div class="score-block${s.newBest ? ' best' : ''}" aria-label="${esc(`Score ${s.score}${s.newBest ? ', a new best' : ''}`)}">
+      <div class="score-main"><span class="kicker">${s.daily ? `Daily Forge · ${esc(s.daily)}` : 'Score'}</span><b class="score-num">${s.score.toLocaleString('en-US')}</b>${s.newBest ? `<span class="new-best">${svg('crown', 16)} New best</span>` : ''}</div>
+      ${s.grades.length ? `<div class="grade-strip" aria-label="Room grades ${esc(s.grades.map((g) => g.grade).join(' '))}">${s.grades.map((g) => `<i data-g="${g.grade}" title="${esc(`${g.room}: ${g.grade}, ${g.time.toFixed(1)} s of par ${g.par}`)}">${g.grade}</i>`).join('')}</div>` : ''}
+      <button class="btn small share" data-act="share" aria-label="Copy the result to the clipboard">${svg('link', 16)}<span>Copy result</span></button>
+      <ul class="score-lines">${s.scoreLines.filter((l) => l.points !== 0).map((l) => `<li><span>${esc(l.label)}</span><b>${l.points > 0 ? '+' : ''}${l.points.toLocaleString('en-US')}</b></li>`).join('')}</ul>
+    </div>
     <ul class="highlights">${s.highlights.map((h, i) => `<li style="--i:${i}" aria-label="${esc(`${h.label} ${h.value}`)}">${svg(h.icon, 22)}<b>${esc(h.value)}</b><span>${esc(h.label)}</span></li>`).join('')}</ul>
     <div class="summary-actions">
       <button class="btn primary big" data-act="launch" data-arg="run" data-autofocus>${svg('play', 24)}<span>One more run</span></button>

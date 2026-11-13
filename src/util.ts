@@ -48,7 +48,8 @@ export function lerp(a: number, b: number, t: number): number {
 }
 
 export function hypot(x: number, y: number): number {
-  return Math.hypot(x, y)
+  // Math.hypot is several times slower in V8, and this runs in every inner loop.
+  return Math.sqrt(x * x + y * y)
 }
 
 export function sign(n: number): number {

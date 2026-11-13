@@ -105,9 +105,9 @@ describe('2. routes are exclusive and only move forward', () => {
         path.push(node.id)
       }
       const depths = path.map((id) => r.nodes.find((n) => n.id === id)!.depth)
-      expect(depths).toEqual([0, 1, 2, 3, 4, 5])
-      expect(r.nodes.find((n) => n.id === path[5])!.type).toBe('boss')
-      expect(r.roomsCleared).toBe(6)
+      expect(depths).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
+      expect(r.nodes.find((n) => n.id === path[7])!.type).toBe('boss')
+      expect(r.roomsCleared).toBe(8)
     }
   })
 })
@@ -517,6 +517,10 @@ describe('9. one equipment transaction for every path', () => {
     const heal = items.find((i) => i.kind === 'heal')!
     expect(buyItem(r, sv, heal)).toBeNull()
     r.cinders = 1000
+    // A patch at full integrity is refused: it would take the cinders and do nothing.
+    expect(buyItem(r, sv, heal)).toBeNull()
+    expect(r.cinders).toBe(1000)
+    r.hp -= 40
     expect(buyItem(r, sv, heal)).not.toBeNull()
     expect(buyItem(r, sv, heal)).toBeNull()
     expect(r.cinders).toBe(1000 - heal.cost)

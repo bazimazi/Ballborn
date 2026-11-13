@@ -83,6 +83,7 @@ export class Juice {
   private timed: Timed[] = []
   private seen = new Map<number, number>()
   private spawnOrder = 0
+  private roomStart = 0
   private smashing: boolean[] = []
   private ghostClock = 0
   private moteClock = 0
@@ -102,6 +103,7 @@ export class Juice {
     this.timed = []
     this.seen.clear()
     this.spawnOrder = 0
+    this.roomStart = this.time
     this.smashing = []
     this.trauma = 0
     this.kickX = 0
@@ -138,8 +140,21 @@ export class Juice {
     this.kickY += (dy / len) * px
   }
 
-  private hitstop(s: number): void {
+  /**
+   * Ask for a hit pause. Pauses in quick succession are thinned out: a ball
+   * pinballing through a pack should not stutter on every contact, only the
+   * big ones (a long pause) get through the cooldown.
+   */
+  requestHitstop(s: number): void {
+    if (s <= 0) return
+    if (this.time < this.stopCoolUntil && s < 0.1) return
     this.hitstopRequest = Math.max(this.hitstopRequest, s)
+    this.stopCoolUntil = this.time + s + 0.18
+  }
+  private stopCoolUntil = -1
+
+  private hitstop(s: number): void {
+    this.requestHitstop(s)
   }
 
   /** Hit pause asked for since the last call. */
@@ -181,7 +196,10 @@ export class Juice {
   enemyScale(uid: number): number {
     let born = this.seen.get(uid)
     if (born === undefined) {
-      born = this.time + Math.min(0.5, this.spawnOrder++ * 0.05)
+      // Only the room's opening line-up pops in one by one; anything that appears mid-fight
+      // (splits, summons, lab respawns) is live at once, so it must be visible at once.
+      const opening = this.time - this.roomStart < 0.25
+      born = opening ? this.time + Math.min(0.5, this.spawnOrder++ * 0.05) : this.time
       this.seen.set(uid, born)
     }
     const age = this.time - born

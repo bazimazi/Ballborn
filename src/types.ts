@@ -183,7 +183,7 @@ export interface SynergyDef {
   modifiers?: Modifier[]
 }
 
-export type Behavior = 'walk' | 'fly' | 'turret' | 'blink'
+export type Behavior = 'walk' | 'fly' | 'turret' | 'blink' | 'charge'
 
 export interface EnemyDef {
   id: string
@@ -196,7 +196,7 @@ export interface EnemyDef {
   contact: number
   color: string
   accent: string
-  shape: 'blob' | 'diamond' | 'shield' | 'hex' | 'splitter' | 'cask' | 'mite' | 'wisp' | 'turret' | 'spark' | 'knight' | 'shard'
+  shape: 'blob' | 'diamond' | 'shield' | 'hex' | 'splitter' | 'cask' | 'mite' | 'wisp' | 'turret' | 'spark' | 'knight' | 'shard' | 'hound'
   armorGate?: number
   armorMul?: number
   resists?: { tag: Tag; mul: number }[]
@@ -343,7 +343,8 @@ export const STAT_CLAMPS: Record<StatKey, [number, number]> = {
   airControl: [0.35, 2.2],
   hop: [300, 1100],
   airThrust: [200, 2200],
-  restitution: [0.05, 1.08],
+  // Never above 1: a bounce that returns more than it received pumps an idle ball into the ceiling.
+  restitution: [0.05, 0.95],
   friction: [0.18, 2.5],
   impact: [0.45, 3.2],
   damageReduction: [0, 0.62],

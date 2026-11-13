@@ -103,15 +103,19 @@ try {
   await page.click('[data-act="launch"][data-arg="tutorial"]')
   await waitScreen(['play'])
   await page.keyboard.down('KeyD')
-  const frames = await page.evaluate(() => new Promise((resolve) => {
+  // The furthest the ball got is sampled during the roll: a lucky first ram can
+  // break the grunt and carry the ball out of the room before the roll ends.
+  const { frames, maxX } = await page.evaluate(() => new Promise((resolve) => {
     const out = []
+    let maxX = 0
     let last = performance.now()
     const end = last + 5000
     const f = (now) => {
       out.push(now - last)
       last = now
+      maxX = Math.max(maxX, window.ballborn.sim?.ball.x ?? 0)
       if (now < end) requestAnimationFrame(f)
-      else resolve(out)
+      else resolve({ frames: out, maxX })
     }
     requestAnimationFrame(f)
   }))
@@ -119,9 +123,9 @@ try {
   const sorted = [...frames].sort((a, b) => a - b)
   const pct = (p) => sorted[Math.min(sorted.length - 1, Math.floor((sorted.length * p) / 100))]
   report.perf.tutorialRoll = { frames: frames.length, p50: pct(50), p95: pct(95), p99: pct(99), max: sorted[sorted.length - 1] }
-  check('ball moved under keyboard input', await game(() => window.ballborn.sim.ball.x > 200), `x=${await game(() => Math.round(window.ballborn.sim.ball.x))}`)
+  check('ball moved under keyboard input', maxX > 200, `x=${Math.round(maxX)}`)
   await shot('02-tutorial')
-  await clearRoom()
+  if ((await screen()) === 'play') await clearRoom()
   check('tutorial clear reaches the reward screen', await waitScreen(['reward']))
   await page.waitForTimeout(400)
   await shot('03-reward')
@@ -252,8 +256,10 @@ try {
   await press(1)
   await page.evaluate(() => { window.__padOn = false })
 
-  // Focus loss pauses a room.
+  // Focus loss pauses a room. A saved run exists by now, so the first click only asks before replacing it.
   await game(() => window.ballborn.goTitle())
+  await page.click('[data-act="launch"][data-arg="tutorial"]')
+  check('starting over a saved run asks first', (await screen()) === 'title')
   await page.click('[data-act="launch"][data-arg="tutorial"]')
   await waitScreen(['play'])
   await page.evaluate(() => window.dispatchEvent(new Event('blur')))
@@ -346,7 +352,10 @@ try {
           let scroller = el.parentElement
           while (scroller && !(scroller.scrollHeight > scroller.clientHeight + 2 && getComputedStyle(scroller).overflowY !== 'visible' && getComputedStyle(scroller).overflowY !== 'hidden')) scroller = scroller.parentElement
           const sideways = r.left < -1 || r.right > vw + 1
-          const scrollerX = scroller && (scroller.scrollWidth > scroller.clientWidth + 2)
+          // A sideways carousel (reward cards on phones) is reachable by swiping.
+          let rail = el.parentElement
+          while (rail && !(rail.scrollWidth > rail.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(rail).overflowX))) rail = rail.parentElement
+          const scrollerX = (scroller && (scroller.scrollWidth > scroller.clientWidth + 2)) || !!rail
           const below = r.bottom > vh + 1 && !scroller
           if ((sideways && !scrollerX && !el.closest('.map-scroll')) || below) bad.push(el.textContent?.trim().slice(0, 30) || el.tagName)
         }

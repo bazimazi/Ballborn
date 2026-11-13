@@ -1,3 +1,4 @@
+import { KEY_D4, PENTA, Score } from './music'
 import type { DamageSource, Material } from './types'
 
 type Priority = 0 | 1 | 2
@@ -6,7 +7,9 @@ const P_WARN: Priority = 2
 const P_HIT: Priority = 1
 const P_LOW: Priority = 0
 
-const VOICE_BUDGET = 24
+/** Phones crackle long before desktops do: a smaller budget for coarse-pointer devices. */
+const COARSE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
+const VOICE_BUDGET = COARSE ? 16 : 24
 
 export type MusicState = 'menu' | 'play' | 'boss' | 'paused'
 
@@ -24,11 +27,15 @@ export class AudioBus {
   private rollFilter: BiquadFilterNode | null = null
   private noise: AudioBuffer | null = null
   private voices = 0
-  private musicTimer = 0
-  private step = 0
   private state: MusicState = 'menu'
   private lastDot = 0
-  private danger = false
+  private score: Score | null = null
+  private duckGain: GainNode | null = null
+  private reverb: GainNode | null = null
+  /** Last values sent to the per-frame params, so a steady value is not re-scheduled every frame. */
+  private lastRoll = -1
+  private lastRollFreq = -1
+  private suspended = false
   available = true
   sfx = 0.75
   music = 0.35
@@ -38,17 +45,55 @@ export class AudioBus {
     try {
       const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!Ctx) throw new Error('no audio')
-      const ctx = new Ctx()
+      // On iPhone, Web Audio follows the ring/silent switch unless the session says this is playback.
+      const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession
+      if (session) {
+        try {
+          session.type = 'playback'
+        } catch {
+          // Older Safari: the switch wins.
+        }
+      }
+      const ctx = new Ctx({ latencyHint: 'interactive' })
       this.ctx = ctx
+      // A gentle bus compressor keeps a chain reaction from clipping.
+      const comp = ctx.createDynamicsCompressor()
+      comp.threshold.value = -14
+      comp.knee.value = 10
+      comp.ratio.value = 4
+      comp.attack.value = 0.004
+      comp.release.value = 0.18
+      comp.connect(ctx.destination)
       this.master = ctx.createGain()
       this.master.gain.value = 0.9
-      this.master.connect(ctx.destination)
+      this.master.connect(comp)
+      // A generated hall: the Foundry is a big iron room.
+      const verb = ctx.createConvolver()
+      verb.buffer = hallImpulse(ctx, COARSE ? 1.2 : 1.9)
+      const verbOut = ctx.createGain()
+      verbOut.gain.value = 0.32
+      verb.connect(verbOut)
+      verbOut.connect(this.master)
+      this.reverb = ctx.createGain()
+      this.reverb.gain.value = 1
+      this.reverb.connect(verb)
+      this.duckGain = ctx.createGain()
+      this.duckGain.gain.value = 1
+      this.duckGain.connect(this.master)
       this.musicGain = ctx.createGain()
       this.musicGain.gain.value = this.music
-      this.musicGain.connect(this.master)
+      this.musicGain.connect(this.duckGain)
+      const musicSend = ctx.createGain()
+      musicSend.gain.value = 0.5
+      this.musicGain.connect(musicSend)
+      musicSend.connect(this.reverb)
       this.sfxGain = ctx.createGain()
       this.sfxGain.gain.value = this.sfx
       this.sfxGain.connect(this.master)
+      const sfxSend = ctx.createGain()
+      sfxSend.gain.value = 0.22
+      this.sfxGain.connect(sfxSend)
+      sfxSend.connect(this.reverb)
       const len = ctx.sampleRate
       const buf = ctx.createBuffer(1, len, ctx.sampleRate)
       const data = buf.getChannelData(0)
@@ -67,6 +112,8 @@ export class AudioBus {
       this.rollFilter.connect(this.rollGain)
       this.rollGain.connect(this.sfxGain)
       src.start()
+      this.score = new Score(ctx, this.musicGain, buf)
+      this.score.setState(this.state)
     } catch {
       this.available = false
       this.ctx = null
@@ -75,8 +122,19 @@ export class AudioBus {
 
   /** Browsers only allow audio after a gesture; call from key and pointer handlers. */
   resume(): void {
+    if (typeof document !== 'undefined' && document.hidden) return
     this.ensure()
+    this.suspended = false
     if (this.ctx && this.ctx.state !== 'running') void this.ctx.resume().catch(() => undefined)
+  }
+
+  /** The tab is hidden: stop the whole graph (rolling noise, reverb, scheduled music) until it returns. */
+  suspend(): void {
+    if (!this.ctx || this.suspended) return
+    this.suspended = true
+    this.rollGain?.gain.setValueAtTime(0, this.ctx.currentTime)
+    this.lastRoll = 0
+    void this.ctx.suspend().catch(() => undefined)
   }
 
   setVolumes(sfx: number, music: number): void {
@@ -95,44 +153,55 @@ export class AudioBus {
   setState(state: MusicState): void {
     if (this.state === state) return
     this.state = state
+    this.score?.setState(state)
     if (!this.ctx || !this.musicGain || !this.rollGain) return
     const t = this.ctx.currentTime
     this.musicGain.gain.setTargetAtTime(this.musicLevel(), t, 0.15)
     if (state !== 'play' && state !== 'boss') this.rollGain.gain.setTargetAtTime(0, t, 0.05)
   }
 
-  /** Rolling noise follows ground speed and the shell material; music follows the room state. */
+  /** Rolling noise follows ground speed and the shell material; the score follows the room. */
   update(dt: number, rolling: number, mass: number, material: Material, danger: boolean): void {
     if (!this.ctx || !this.rollGain || !this.rollFilter) return
     const t = this.ctx.currentTime
     const live = this.state === 'play' || this.state === 'boss'
     const target = live ? Math.max(0, Math.min(0.18, rolling)) * (0.6 + mass * 0.25) : 0
-    this.rollGain.gain.setTargetAtTime(target, t, 0.05)
-    const freq = material === 'rubber' ? 200 : material === 'glass' ? 520 : material === 'heavy' ? 150 : 280
-    this.rollFilter.frequency.setTargetAtTime(freq / Math.sqrt(Math.max(0.4, mass)), t, 0.1)
-    this.danger = danger
-    this.musicTimer -= dt
-    if (this.musicTimer <= 0) {
-      this.musicTimer = this.state === 'boss' ? 0.36 : this.state === 'menu' ? 0.62 : 0.48
-      this.pulse()
-      this.step = (this.step + 1) % 8
+    // Automation events pile up when sent every frame (hundreds a second at 144 Hz); only send real changes.
+    if (Math.abs(target - this.lastRoll) > 0.004 || (target === 0 && this.lastRoll !== 0)) {
+      this.rollGain.gain.setTargetAtTime(target, t, 0.05)
+      this.lastRoll = target
     }
+    const base = material === 'rubber' ? 200 : material === 'glass' ? 520 : material === 'heavy' ? 150 : 280
+    const freq = base / Math.sqrt(Math.max(0.4, mass))
+    if (Math.abs(freq - this.lastRollFreq) > 1) {
+      this.rollFilter.frequency.setTargetAtTime(freq, t, 0.1)
+      this.lastRollFreq = freq
+    }
+    if (!this.score) return
+    this.score.setDanger(danger)
+    if (this.music > 0.01) this.score.update(dt)
   }
 
-  private pulse(): void {
-    if (!this.ctx || !this.musicGain || this.music <= 0.01 || this.state === 'paused') return
+  /** How hot the room is, 0 to 1. Layers of the score enter and leave with it. */
+  setIntensity(v: number, bossPhase = 1): void {
+    this.score?.setIntensity(v)
+    this.score?.setBossPhase(bossPhase)
+  }
+
+  /** Pull the music down for a moment so a big hit owns the mix. */
+  duck(amount = 0.45, holdFor = 0.12): void {
+    if (!this.ctx || !this.duckGain) return
     const t = this.ctx.currentTime
-    const dest = this.musicGain
-    const notes = this.state === 'boss' ? [49, 49, 58.3, 49, 65.4, 49, 58.3, 73.4] : [55, 55, 65.4, 73.4, 55, 82.4, 65.4, 49]
-    if (this.step % 2 === 0) this.tone(notes[this.step] ?? 55, t, 0.18, 'sine', 0.045, dest, P_LOW)
-    if (this.state !== 'menu' && this.step % 2 === 1) this.noiseBurst(t, 0.03, 1800, 0.012, dest, P_LOW)
-    if (this.step === 0 || this.step === 4) this.tone(80, t, 0.08, 'triangle', 0.05, dest, P_LOW)
-    if (this.state === 'boss' && this.step % 4 === 2) this.tone(98, t, 0.12, 'sawtooth', 0.02, dest, P_LOW)
-    if (this.danger && this.step % 4 === 0) {
-      // Low integrity heartbeat, alongside the red vignette and CRACKED label.
-      this.tone(52, t, 0.1, 'sine', 0.08, dest, P_WARN)
-      this.tone(52, t + 0.16, 0.1, 'sine', 0.06, dest, P_WARN)
+    const g = this.duckGain.gain
+    // Hold the live value where the engine can (reading .value mid-ramp is stale on some engines and clicks).
+    const hold = g as AudioParam & { cancelAndHoldAtTime?: (t: number) => void }
+    if (typeof hold.cancelAndHoldAtTime === 'function') hold.cancelAndHoldAtTime(t)
+    else {
+      g.cancelScheduledValues(t)
+      g.setValueAtTime(g.value, t)
     }
+    g.linearRampToValueAtTime(1 - amount, t + 0.02)
+    g.setTargetAtTime(1, t + 0.02 + holdFor, 0.18)
   }
 
   impact(speed: number, mass: number, material: Material, kind: 'clean' | 'glance' | 'block'): void {
@@ -146,7 +215,8 @@ export class AudioBus {
     }
     const vol = Math.max(0.04, Math.min(0.35, speed / 1400)) * (kind === 'glance' ? 0.55 : 1)
     const base = material === 'heavy' ? 70 : material === 'glass' ? 240 : material === 'rubber' ? 140 : material === 'electric' ? 320 : material === 'fire' ? 110 : 160
-    const freq = base / Math.sqrt(Math.max(0.4, mass))
+    // A little pitch drift per hit: twenty identical rams should not sound identical.
+    const freq = (base / Math.sqrt(Math.max(0.4, mass))) * (0.94 + Math.random() * 0.12)
     this.tone(freq, t, 0.09 + mass * 0.03, material === 'glass' ? 'triangle' : 'sine', vol, dest, P_HIT)
     this.noiseBurst(t, 0.06 + Math.min(0.08, speed / 8000), material === 'electric' ? 2400 : 900, vol * 0.7, dest, P_HIT)
     if (kind === 'clean') this.tone(freq * 0.5, t, 0.16, 'sine', vol * 0.8, dest, P_HIT)
@@ -193,16 +263,20 @@ export class AudioBus {
     const t = this.ctx.currentTime
     this.noiseBurst(t, 0.14, 420, 0.14, this.sfxGain, P_HIT)
     this.tone(55, t, 0.18, 'sine', 0.16, this.sfxGain, P_HIT)
-    const scale = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26, 28, 31, 33]
-    const step = scale[Math.min(scale.length - 1, Math.max(0, combo - 1))]!
-    this.tone(392 * Math.pow(2, step / 12), t + 0.02, 0.14, 'triangle', 0.05, this.sfxGain, P_LOW)
+    // Each link of a combo climbs the score's own scale.
+    const step = PENTA[Math.min(PENTA.length - 1, Math.max(0, combo - 1))]!
+    this.tone(KEY_D4 * Math.pow(2, step / 12), t + 0.02, 0.16, 'triangle', 0.055, this.sfxGain, P_LOW)
+    if (combo >= 6) this.tone(KEY_D4 * 2 * Math.pow(2, step / 12), t + 0.05, 0.12, 'sine', 0.025, this.sfxGain, P_LOW)
   }
 
   /** The gate opened, or the ball went through it. */
   clear(): void {
     if (!this.ctx || !this.sfxGain) return
     const t = this.ctx.currentTime
-    for (let i = 0; i < 3; i++) this.tone([392, 523, 659][i]!, t + i * 0.06, 0.22, 'triangle', 0.05, this.sfxGain, P_LOW)
+    // D major over a D minor score: the gate opening is the one bright chord.
+    const notes = [293.66, 369.99, 440, 587.33]
+    for (let i = 0; i < notes.length; i++) this.tone(notes[i]!, t + i * 0.055, 0.42 - i * 0.05, 'triangle', 0.055, this.sfxGain, P_LOW)
+    this.tone(146.83, t, 0.5, 'sine', 0.06, this.sfxGain, P_LOW)
   }
 
   /** The ball breaks apart. */
@@ -265,6 +339,8 @@ export class AudioBus {
   }
 
   private claim(priority: Priority): boolean {
+    // Muted effects build no nodes at all.
+    if (this.sfx <= 0.01 || this.suspended) return false
     if (this.voices >= VOICE_BUDGET && priority < P_WARN) return false
     if (this.voices >= VOICE_BUDGET * 0.75 && priority === P_LOW) return false
     this.voices++
@@ -313,6 +389,22 @@ export class AudioBus {
   }
 
   get activeVoices(): number {
-    return this.voices
+    return this.voices + (this.score?.activeVoices ?? 0)
   }
+}
+
+/** Decaying stereo noise with a darkened tail: a cheap, convincing hall. */
+function hallImpulse(ctx: AudioContext, seconds: number): AudioBuffer {
+  const len = Math.floor(ctx.sampleRate * seconds)
+  const buf = ctx.createBuffer(2, len, ctx.sampleRate)
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch)
+    let lp = 0
+    for (let i = 0; i < len; i++) {
+      const k = i / len
+      lp += (Math.random() * 2 - 1 - lp) * (0.5 - k * 0.42)
+      d[i] = lp * Math.pow(1 - k, 2.6) * (i < 90 ? i / 90 : 1)
+    }
+  }
+  return buf
 }

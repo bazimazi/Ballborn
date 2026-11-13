@@ -170,7 +170,8 @@ export function eventCandidates(run: RunState, save: SaveData): GameEvent[] {
   const fusion = fusionFor(run)
   if (fusion && !seen.has('crucible')) {
     const cost: Cost = save.embers > 0 ? { embers: 1 } : { hp: 24 }
-    const disabled = !save.embers && run.hp <= 25 ? 'Your shell cannot pay 24 integrity.' : undefined
+    // The same test the payment makes: integrity must stay above the price.
+    const disabled = !save.embers && run.hp <= 24 ? 'Your shell cannot pay 24 integrity.' : undefined
     options.push({
       id: 'crucible',
       title: 'The Crucible',

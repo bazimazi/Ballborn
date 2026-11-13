@@ -85,7 +85,8 @@ body:not(.touch) .touch-only { display: none !important; }
     var(--panel);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
-  padding: 22px;
+  --pad: 22px;
+  padding: var(--pad);
   clip-path: polygon(0 14px, 14px 0, calc(100% - 14px) 0, 100% 14px, 100% calc(100% - 14px), calc(100% - 14px) 100%, 14px 100%, 0 calc(100% - 14px));
   backdrop-filter: blur(10px);
 }
@@ -95,6 +96,13 @@ body:not(.touch) .touch-only { display: none !important; }
   opacity: 0.8;
 }
 .panel.narrow { width: min(640px, 100%); }
+/* Long screens keep their back button and tabs in reach while the list scrolls. */
+.sticky-head {
+  position: sticky; top: calc(-1 * var(--pad)); z-index: 3; display: flex; flex-direction: column; gap: 10px;
+  margin: calc(-1 * var(--pad)) calc(-1 * var(--pad)) 0; padding: var(--pad) var(--pad) 10px;
+  background: #1d1712; box-shadow: 0 8px 12px -8px rgba(0, 0, 0, 0.6);
+}
+.panel:has(> .sticky-head) { scroll-padding-top: 120px; }
 /* Every long panel scrolls inside the viewport instead of clipping. */
 .scroll, .panel { max-height: calc(var(--vh) - 40px - var(--sat) - var(--sab)); overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--line) transparent; -webkit-overflow-scrolling: touch; }
 
@@ -236,7 +244,7 @@ h1, h2, .word {
   box-shadow: 0 0 0 1px #6a4c36, 0 4px 14px rgba(0,0,0,0.6);
 }
 .hp-track > div { position: absolute; top: 0; bottom: 0; left: 0; }
-#hp-bar { background: linear-gradient(180deg, #ffc27a, #ff6a2a 55%, #c43a10); box-shadow: 0 0 12px rgba(255, 110, 40, 0.6); transition: width 90ms linear; }
+#hp-bar { background: linear-gradient(180deg, #ffc27a, #ff6a2a 55%, #c43a10); box-shadow: 0 0 12px rgba(255, 110, 40, 0.6); transition: transform 90ms linear; }
 #hp-chip { background: #fff1df; opacity: 0.85; }
 #shield-bar { background: repeating-linear-gradient(90deg, rgba(154, 215, 255, 0.85) 0 6px, rgba(154, 215, 255, 0.5) 6px 8px); height: 5px !important; top: auto !important; }
 .hp-track::after {
@@ -245,9 +253,9 @@ h1, h2, .word {
 }
 .meter.low #hp-bar { background: linear-gradient(180deg, #ff9aa6, #ff5d73 55%, #b0213a); animation: pulse-red 0.8s ease-in-out infinite; }
 .meter.hurt .hp-track { box-shadow: 0 0 0 1px #ff8a7a, 0 0 18px rgba(255, 80, 60, 0.6); }
-@keyframes pulse-red { 50% { filter: brightness(1.4); } }
+@keyframes pulse-red { 50% { opacity: 0.62; } }
 
-#energy-bar { height: 100%; background: linear-gradient(90deg, #4f8fd6, #9ad7ff); width: 0%; box-shadow: 0 0 8px rgba(124, 188, 255, 0.5); }
+#energy-bar { height: 100%; background: linear-gradient(90deg, #4f8fd6, #9ad7ff); box-shadow: 0 0 8px rgba(124, 188, 255, 0.5); }
 .ability-readout { display: flex; gap: 12px; align-items: center; }
 .ability-info { display: flex; flex-direction: column; gap: 3px; }
 #ability-state { font-weight: 800; font-variant-numeric: tabular-nums; min-height: 1.2em; }
@@ -274,7 +282,7 @@ h1, h2, .word {
 .speed-meter { display: flex; align-items: center; gap: 8px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .speed-meter svg.i { width: 18px; height: 18px; }
 .speed-track { width: 200px; height: 8px; transform: skewX(-18deg); margin-top: 0; }
-#speed-bar { height: 100%; width: 0; background: linear-gradient(90deg, #6a5c4e, #d7c6ae); transition: width 80ms linear; }
+#speed-bar { height: 100%; background: linear-gradient(90deg, #6a5c4e, #d7c6ae); transition: transform 80ms linear; }
 .speed-track .notch { position: absolute; left: 55%; top: -3px; bottom: -3px; width: 2px; background: #fff6ea; box-shadow: 0 0 4px #000; }
 .speed-meter.armed #speed-bar { background: linear-gradient(90deg, #3ecf8e, #b8ffe0); box-shadow: 0 0 10px rgba(141, 255, 192, 0.6); }
 .speed-meter.armed { color: var(--good); }
@@ -317,7 +325,7 @@ body.touch .touch-stick {
   width: 124px; height: 124px; margin: -62px 0 0 -62px; border-radius: 50%;
   background: radial-gradient(circle, rgba(255, 177, 90, 0.08), rgba(20, 16, 13, 0.45) 70%);
   border: 2px solid rgba(255, 210, 160, 0.28); box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
-  opacity: 0.6; transition: opacity 120ms;
+  opacity: 0.28; transition: opacity 120ms;
 }
 .stick-knob {
   position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%;
@@ -338,10 +346,12 @@ body.touch .speed-track { width: 140px; }
   body.touch .rotate-hint {
     display: grid; place-items: center; position: absolute; left: 50%; top: 42%; transform: translateX(-50%);
     width: 76px; height: 76px; border-radius: 50%; background: rgba(12, 9, 7, 0.75); border: 1px solid var(--line);
-    color: var(--molten-2); animation: rotate-hint 2.4s var(--ease-out) infinite;
+    color: var(--molten-2); animation: rotate-hint 2.4s var(--ease-out) 3, hint-out 0.6s 7.2s forwards;
   }
+  body.touch .banner:not(:empty) ~ .rotate-hint { display: none; }
   body.touch .rotate-hint svg.i { width: 40px; height: 40px; }
 }
+@keyframes hint-out { from { opacity: 0.5; transform: translateX(-50%) rotate(-90deg); } to { opacity: 0; transform: translateX(-50%) rotate(-90deg); visibility: hidden; } }
 @keyframes rotate-hint { 0%, 30% { transform: translateX(-50%) rotate(0); opacity: 0.9; } 60%, 100% { transform: translateX(-50%) rotate(-90deg); opacity: 0.5; } }
 
 .boss-bar {
@@ -367,6 +377,8 @@ body.touch .speed-track { width: 140px; }
 .combo[data-tier="3"] b { color: #fff4d6; font-size: 4.4rem; text-shadow: 0 3px 0 #000, 0 0 26px rgba(255, 200, 90, 0.9); }
 .combo-timer { width: 96px; height: 4px; background: #0c0a08; margin-top: 6px; box-shadow: 0 0 0 1px #000; }
 #combo-timer { height: 100%; background: var(--molten-2); }
+/* HUD bars fill by scaleX (set from the HUD), never by width. */
+#hp-bar, #hp-chip, #shield-bar, #boss-fill, #boss-chip, #energy-bar, #speed-bar, #combo-timer { width: 100%; right: auto; transform-origin: left center; transform: scaleX(0); will-change: transform; }
 
 .banner { position: absolute; left: 0; right: 0; top: 26%; display: grid; place-items: center; pointer-events: none; }
 .banner-inner {
@@ -464,6 +476,7 @@ details[open] > summary::after { transform: rotate(90deg); }
 .seed summary { display: inline-flex; width: auto; color: var(--muted); font-size: 0.85rem; }
 .seed input { width: 180px; background: #1a1612cc; border: 1px solid var(--line); padding: 10px; margin-top: 6px; min-height: 44px; font-size: 16px; }
 .title-foot { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+.title-foot [data-fs] { margin-left: auto; }
 
 /* ---------------------------------------------------------------------------
    Settings. */
@@ -829,7 +842,7 @@ body.reduce-motion .card { transform: none; translate: none; }
 @media (max-width: 900px), (max-height: 640px) {
   #screen { padding: max(8px, var(--sat)) max(8px, var(--sar)) max(8px, var(--sab)) max(8px, var(--sal)); }
   #screen.title { padding-left: max(16px, var(--sal)); }
-  .panel { padding: 14px; gap: 10px; max-height: calc(var(--vh) - 16px - var(--sat) - var(--sab)); clip-path: polygon(0 10px, 10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px)); }
+  .panel { --pad: 14px; gap: 10px; max-height: calc(var(--vh) - 16px - var(--sat) - var(--sab)); clip-path: polygon(0 10px, 10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px)); }
   .title-lockup { max-height: calc(var(--vh) - 16px - var(--sat) - var(--sab)); }
   .title-lockup h1 { font-size: 56px; }
   .tagline { font-size: 0.95rem; }
@@ -862,8 +875,15 @@ body.reduce-motion .card { transform: none; translate: none; }
   .banner .portrait { width: 84px; height: 84px; }
   .banner-inner { padding: 10px 40px; }
   #toasts { top: calc(max(8px, var(--sat)) + 56px); width: min(320px, 70vw); }
-  .toast { font-size: 0.78rem; padding: 6px 10px; }
-  .toast:nth-last-child(n+4) { display: none; }
+  .toast { font-size: 0.78rem; padding: 5px 10px; }
+  .toast:nth-last-child(n+3) { display: none; }
+  /* Over a menu, toasts sit at the top centre, between a screen's title and its actions. */
+  body:not([data-screen="play"]):not([data-screen^="lab"]) #toasts { left: 50%; right: auto; top: max(10px, var(--sat)); transform: translateX(-50%); width: auto; max-width: min(320px, 56vw); align-items: center; }
+  /* The paused HUD would show through and collide with the pause panel. */
+  body[data-screen="pause"] .hud-top, body[data-screen="pause"] .boss-bar, body[data-screen="pause"] .combo,
+  body[data-screen="pause"] .prompt, body[data-screen="pause"] .readouts { visibility: hidden; }
+  /* Card text that runs past the fold fades out, so it reads as scrollable rather than cut. */
+  .card-body { padding-bottom: 14px; -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 18px), transparent); mask-image: linear-gradient(180deg, #000 calc(100% - 18px), transparent); }
   .settings-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
   .summary-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 }
@@ -871,7 +891,8 @@ body.reduce-motion .card { transform: none; translate: none; }
 /* Landscape phones: short. Two columns where a column would scroll. */
 @media (max-height: 500px) {
   h2 { font-size: 1.4rem; }
-  .card canvas { height: 64px; }
+  .card canvas { height: 56px; }
+  .take { min-height: 40px; }
   .card { gap: 5px; padding: 10px; }
   .card-title { font-size: 1.1rem; }
   .btn.big { min-height: 48px; font-size: 1.05rem; }
@@ -894,7 +915,16 @@ body.reduce-motion .card { transform: none; translate: none; }
   body.touch .dial { width: 60px; height: 60px; }
   body.touch .readouts { display: none; }
   #room-name { display: none; }
-  .sheet { top: calc(max(8px, var(--sat)) + 52px); max-height: calc(100% - 64px - var(--sat)); }
+  /* The build sheet goes wide and two-column so it fits without a long scroll. */
+  .sheet {
+    top: calc(max(8px, var(--sat)) + 52px); max-height: calc(100% - 60px - max(8px, var(--sat)) - max(8px, var(--sab)));
+    width: min(640px, calc(100% - 2 * max(16px, var(--sar)))); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr); gap: 6px 14px; align-content: start; padding: 10px 12px;
+  }
+  .sheet-head { grid-column: 1 / -1; }
+  .sheet-head h2 { font-size: 1.15rem; }
+  .sheet > :not(.sheet-head):not(table) { grid-column: 1; }
+  .sheet table.stats { grid-column: 2; grid-row: 2 / span 6; margin: 0; font-size: 0.78rem; }
+  .sheet .slot-grid li { padding: 5px 3px; font-size: 0.68rem; }
   /* Short screens: parts scroll sideways in one row so the room stays visible. */
   .part-row { display: flex; overflow-x: auto; scrollbar-width: none; }
   .part-row::-webkit-scrollbar { display: none; }
@@ -904,6 +934,11 @@ body.reduce-motion .card { transform: none; translate: none; }
   .drawer-head h3 { font-size: 0.9rem; }
   .lab-drawer { padding: 6px 8px; gap: 6px; }
   .part-info { display: none; }
+}
+
+/* Very short landscape phones: the feel preview is too small to read; the words matter more. */
+@media (max-height: 440px) {
+  .card canvas { display: none; }
 }
 
 /* Portrait phones: narrow. */
@@ -921,17 +956,26 @@ body.reduce-motion .card { transform: none; translate: none; }
   .cc-head h3 { font-size: 0.92rem; }
   .shop-grid { grid-template-columns: 1fr; }
   .meter { width: 38vw; }
-  .objective { display: none; }
+  .objective { position: absolute; left: 0; top: calc(100% + 6px); align-items: flex-start; max-width: 60vw; }
+  #room-name { display: none; }
+  .boss-bar { top: calc(max(12px, var(--sat)) + 96px); width: calc(100vw - 32px); }
+  .prompt { top: calc(max(12px, var(--sat)) + 96px); max-width: calc(100vw - 32px); }
   .resources { flex-direction: row; gap: 8px; }
   .hud-right { gap: 6px; }
   .hud-btn { width: 40px; height: 40px; }
-  #toasts { width: calc(100vw - 32px); align-items: stretch; }
+  #toasts { width: auto; max-width: calc(100vw - 32px); }
+  /* Over a portrait menu the header is the title; toasts go to the bottom instead. */
+  body:not([data-screen="play"]):not([data-screen^="lab"]) #toasts { top: auto; bottom: max(12px, var(--sab)); max-width: calc(100vw - 32px); flex-direction: column-reverse; }
+  .banner-inner { padding: 10px 18px; max-width: 100vw; }
+  .banner-inner.boss { padding: 12px 18px; }
+  .banner-inner.boss .banner-title { font-size: clamp(1.9rem, 10vw, 3rem); }
   .combo { right: 16px; }
   .breakdown li { grid-template-columns: 84px 1fr 34px; }
   .lab-name { display: none; }
   .lab-slot .slot-name { display: none; }
   .lab-bar { flex-wrap: wrap; justify-content: space-between; }
   .lab-slots { order: 3; flex-basis: 100%; }
+  .lab-slot { min-width: 38px; padding: 4px; }
   .lab-drawer { max-height: 46vh; }
   .lab-stats { grid-template-columns: 1fr; }
   body.touch .touch-stick { width: 55%; height: 60%; }
@@ -940,4 +984,130 @@ body.reduce-motion .card { transform: none; translate: none; }
 /* Very narrow phones: one codex card per row. */
 @media (max-width: 380px) {
   .grid { grid-template-columns: 1fr; }
+}
+
+/* ---- Overhaul: banish, reaction hints, room grades ---- */
+.card-head .banish { width: 30px; height: 30px; min-height: 30px; padding: 0; margin-left: 4px; opacity: 0.7; }
+.card-head .banish:hover:not(:disabled), .card-head .banish:focus-visible { opacity: 1; color: var(--bad); border-color: var(--bad); }
+.tag.near { color: var(--legend); border-color: color-mix(in srgb, var(--legend) 45%, transparent); border-style: dashed; }
+
+.grade-line { display: flex; align-items: center; gap: 14px; padding: 8px 14px; margin: 0 0 4px; border: 1px solid var(--line-soft); background: linear-gradient(90deg, rgba(0,0,0,0.35), transparent); animation: grade-in 420ms var(--ease-back) both; }
+.grade-stamp { font-size: 2.4rem; font-weight: 900; line-height: 1; width: 1.5em; text-align: center; transform: rotate(-8deg); text-shadow: 0 3px 0 rgba(0,0,0,0.5); }
+.grade-facts { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 0.9rem; }
+.grade-facts > span { display: inline-flex; align-items: center; gap: 4px; }
+.grade-facts .pay { color: var(--cinder); font-weight: 700; }
+.grade-line[data-grade="S"] .grade-stamp { color: var(--legend); text-shadow: 0 0 18px color-mix(in srgb, var(--legend) 60%, transparent), 0 3px 0 rgba(0,0,0,0.5); }
+.grade-line[data-grade="A"] .grade-stamp { color: var(--good); }
+.grade-line[data-grade="B"] .grade-stamp { color: var(--rare); }
+.grade-line[data-grade="C"] .grade-stamp { color: var(--muted); }
+@keyframes grade-in { from { transform: scale(1.25); opacity: 0; } to { transform: none; opacity: 1; } }
+.reduce-motion .grade-line { animation: none; }
+.grade-strip { font-family: ui-monospace, Consolas, monospace; letter-spacing: 0.18em; font-weight: 800; }
+.grade-strip i { font-style: normal; }
+.grade-strip i[data-g="S"] { color: var(--legend); }
+.grade-strip i[data-g="A"] { color: var(--good); }
+.grade-strip i[data-g="B"] { color: var(--rare); }
+.grade-strip i[data-g="C"] { color: var(--muted); }
+
+/* ---- Score block and Daily Forge ---- */
+.score-block { display: grid; grid-template-columns: auto 1fr auto; gap: 8px 18px; align-items: center; padding: 12px 16px; border: 1px solid var(--line-soft); background: rgba(0,0,0,0.28); }
+.score-block.best { border-color: color-mix(in srgb, var(--legend) 55%, transparent); box-shadow: 0 0 24px color-mix(in srgb, var(--legend) 18%, transparent) inset; }
+.score-main { display: flex; flex-direction: column; gap: 2px; }
+.score-num { font-size: 2.2rem; font-weight: 900; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.new-best { display: inline-flex; align-items: center; gap: 4px; color: var(--legend); font-weight: 800; font-size: 0.85rem; animation: grade-in 500ms var(--ease-back) both; }
+.score-block .grade-strip { font-size: 1.5rem; justify-self: start; }
+.score-block > :nth-child(2):not(.grade-strip) { grid-column: 3; }
+.score-lines { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; list-style: none; font-size: 0.82rem; color: var(--muted); }
+.score-lines b { color: var(--text); margin-left: 4px; font-variant-numeric: tabular-nums; }
+.score-block .share { justify-self: end; }
+@media (max-width: 620px) { .score-block { grid-template-columns: 1fr; } .score-block .share { justify-self: start; } }
+.btn.daily { flex-wrap: wrap; row-gap: 0; }
+.btn.daily small { flex-basis: 100%; font-size: 0.72rem; font-weight: 500; color: var(--muted); padding-left: 32px; text-align: left; }
+.btn.daily svg { color: var(--legend); }
+
+/* ---------------------------------------------------------------------------
+   Review pass: touch, phones, and smoothness. */
+
+/* Intro animations belong to entering a screen, not to every rebuild: selecting a map
+   node, swapping a lab part, or banishing a card must not deal the whole screen again. */
+#screen:not(.enter) .logo-line span,
+#screen:not(.enter) .title-menu .btn,
+#screen:not(.enter) .title-actions .tiles .tile,
+#screen:not(.enter) .card,
+#screen:not(.enter) .node,
+#screen:not(.enter) .highlights li,
+#screen:not(.enter) .grade-line,
+#screen:not(.enter) .new-best,
+#screen .lab-drawer.stay { animation: none; }
+#screen:not(.enter) .node.open { animation: node-glow 1.6s ease-in-out infinite; }
+
+/* No pinch-zoom of the page on iOS (which ignores user-scalable=no), and no double-tap delay. */
+#screen, #screen *, .sheet, .sheet * { touch-action: pan-x pan-y; }
+button, select, summary { touch-action: pan-x pan-y; }
+input[type="range"] { touch-action: pan-y; }
+#view, .touch-stick, .hop-btn, .hud-btn, .dial { touch-action: none; }
+/* Icons are not draggable pictures. */
+img { -webkit-user-drag: none; }
+#screen img, #hud img { pointer-events: none; }
+
+/* Hover-only affordances stay on devices that hover. */
+@media (hover: none) {
+  .card-head .banish:hover:not(:disabled) { opacity: 0.7; color: inherit; border-color: var(--line); }
+}
+
+/* Touch targets: at least 44 px wherever a finger is the pointer. */
+body.touch .btn.tiny { min-height: 44px; }
+body.touch details summary { min-height: 44px; }
+body.touch .drawer-head .icon-btn { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+body.touch .lab-slot { min-width: 44px; min-height: 44px; }
+body.touch .card-head .banish { width: 40px; min-width: 40px; height: 40px; min-height: 40px; position: relative; }
+body.touch .card-head .banish::before { content: ""; position: absolute; inset: -6px; }
+@media (max-height: 500px), (max-width: 600px) {
+  body.touch .hud-btn { width: 44px; height: 44px; }
+}
+
+/* The ability dial sits beside hop at every control size (hop grows with the setting; so does the gap). */
+body.touch .ability-readout { right: calc(100px * var(--touch-scale, 1)); bottom: calc(62px * var(--touch-scale, 1)); }
+body.touch.left-handed .ability-readout { right: auto; left: calc(100px * var(--touch-scale, 1)); }
+@media (max-height: 500px) {
+  /* Short landscape phones: the dial sits low, beside hop, over the floor rather than over the
+     lane where constructs come in from the right. */
+  body.touch .ability-readout { right: calc(76px * var(--touch-scale, 1) + 14px); bottom: 0; }
+  body.touch.left-handed .ability-readout { right: auto; left: calc(76px * var(--touch-scale, 1) + 14px); }
+  .lab-drawer { max-height: calc(var(--vh) * 0.52); }
+}
+@media (max-width: 600px) {
+  .lab-drawer { max-height: calc(var(--vh) * 0.46); }
+}
+
+/* The portrait rotate hint shows once per session, not at every room. */
+body.rotate-seen .rotate-hint { display: none !important; }
+
+/* Blurring a canvas that repaints every frame is expensive on phone GPUs: solid panels instead. */
+@media (pointer: coarse) {
+  .panel, .lab-bar, .lab-drawer, .sheet { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .lab-bar, .lab-drawer { background: #1a1612f5; }
+}
+
+/* The build sheet owns the top right while it is open; toasts would cover its close button. */
+body.build-open #toasts { visibility: hidden; }
+
+/* Map: the picked room's advice, and its Go button, stay in view on short screens. */
+.node-info .advice { color: var(--muted); }
+@media (max-height: 500px) {
+  .node-info { position: sticky; bottom: 0; z-index: 2; }
+  .node-info .advice { display: none; }
+}
+
+/* Very short landscape phones (iPhone SE, small Androids): reward cards say the essentials without a scroll. */
+@media (max-height: 440px) {
+  h2 { font-size: 1.2rem; }
+  .card { padding: 8px 10px; gap: 4px; }
+  .card-head { padding-bottom: 4px; gap: 6px; }
+  .card-head .ico { width: 24px; height: 24px; }
+  .card-title { font-size: 1rem; }
+  .card .up, .card .down, .card .swap-line, .card .hp-line { font-size: 0.8rem; line-height: 1.25; }
+  .card .bars { gap: 2px; font-size: 0.72rem; }
+  .card .take { min-height: 40px; }
+  .rarity { font-size: 0.62rem; letter-spacing: 0.1em; }
 }

@@ -3,6 +3,7 @@ import { COMPONENT_MAP, COMPONENTS } from './data/components'
 import { heatOf, OVERCHARGE } from './data/meta'
 import { ROOM_MAP, roomsOf } from './data/rooms'
 import { SYNERGIES } from './data/synergies'
+import type { RoomGrade } from './grade'
 import type { SaveData } from './save'
 import type { CompiledBuild, ComponentDef, DamageSource, HitSource, Rarity, RoomTemplate, RoomType, RunMod, Slot, SynergyDef } from './types'
 import { SLOTS } from './types'
@@ -64,6 +65,18 @@ export interface RunState {
   decisions: string[]
   /** Reward table used for the current reward screen, so rerolls draw from the same table. */
   offerKind: OfferKind
+  /** Banish charges left: a banished part never appears again this run. */
+  banishes: number
+  banished: string[]
+  /** Rises each reward screen without a rare part; resets when one shows. Slay the Spire's pity rule. */
+  rarePity: number
+  grades: RoomGrade[]
+  rams: number
+  cleanRams: number
+  /** The date key of a Daily Forge run, or null. */
+  daily: string | null
+  /** The lowest damage-taken assist any room of this run was played at (1 = none). Scores use this, not the live setting. */
+  assist: number
 }
 
 export type OfferKind = 'combat' | 'elite' | 'soft' | 'treasure'
@@ -80,6 +93,8 @@ export interface Offer {
   replaces?: { id: string; name: string } | null
   gained?: string[]
   lost?: string[]
+  /** Reactions one part away once this is fitted. */
+  near?: string[]
   hp?: { before: number; after: number; maxBefore: number; maxAfter: number }
   energyMax?: { before: number; after: number }
   bars?: { label: string; current: number; next: number }[]
@@ -103,12 +118,19 @@ export const HIT_SOURCES: HitSource[] = ['collision', 'ability', 'effect', 'refl
 
 const ROOM_TYPES: RoomType[] = ['combat', 'traversal', 'challenge', 'elite', 'event', 'treasure', 'shop', 'boss']
 
+/**
+ * The Foundry route: seven rooms and the Colossus, about twelve minutes. Two
+ * elite layers give the build two real tests before the boss, and the layer
+ * before the hold is always a place to finish the build (shop or treasure).
+ */
 const PATTERN: RoomType[][] = [
   ['combat', 'traversal'],
-  ['combat', 'challenge'],
+  ['combat', 'challenge', 'combat'],
   ['treasure', 'event', 'shop'],
-  ['elite', 'combat'],
-  ['event', 'challenge'],
+  ['elite', 'combat', 'challenge'],
+  ['event', 'traversal', 'combat'],
+  ['elite', 'challenge', 'combat'],
+  ['shop', 'treasure'],
   ['boss'],
 ]
 
@@ -171,6 +193,14 @@ export function createRun(heat: number, tutorial: boolean, seed = randomSeed()):
     route: [],
     decisions: [],
     offerKind: 'combat',
+    banishes: 2,
+    banished: [],
+    rarePity: 0,
+    grades: [],
+    rams: 0,
+    cleanRams: 0,
+    daily: null,
+    assist: 1,
   }
 }
 
@@ -352,11 +382,7 @@ export function makeOffers(run: RunState, save: SaveData, kind: OfferKind): Offe
     ]
   }
   const offers: Offer[] = []
-  const bias: Rarity[] = kind === 'elite' || kind === 'treasure'
-    ? ['rare', 'epic', 'uncommon', 'rare']
-    : kind === 'soft'
-      ? ['common', 'uncommon', 'common']
-      : ['common', 'uncommon', 'rare', 'common', 'uncommon']
+  const bias = offerBias(kind)
   const wantSame = run.rng() < 0.55
   const pool = availableComponents(run, save)
   if (wantSame && pool.length >= 2) {
@@ -369,16 +395,21 @@ export function makeOffers(run: RunState, save: SaveData, kind: OfferKind): Offe
     const slots = [...bySlot.entries()].filter(([, list]) => list.length >= 2)
     if (slots.length) {
       const [, list] = choice(run.rng, slots)
-      for (const c of weighted(run.rng, list, bias).slice(0, 2)) offers.push(componentOffer(run, save, c.id))
+      for (const c of weighted(run.rng, list, bias, run.rarePity).slice(0, 2)) offers.push(componentOffer(run, save, c.id))
     }
   }
   let spins = 0
   while (offers.length < 2 && spins < 12) {
     spins++
-    const pick = weighted(run.rng, pool.filter((c) => !offers.some((o) => o.componentId === c.id)), bias)[0]
+    const pick = weighted(run.rng, pool.filter((c) => !offers.some((o) => o.componentId === c.id)), bias, run.rarePity)[0]
     if (!pick) break
     offers.push(componentOffer(run, save, pick.id))
   }
+  // Pity: every screen without a rare part makes the next one likelier to show one.
+  // Judged on the cards actually shown (treasure keeps only the first part).
+  const shown = kind === 'treasure' ? offers.slice(0, 1) : offers
+  const rare = shown.some((o) => o.rarity && rarityRank(o.rarity) >= rarityRank('rare'))
+  run.rarePity = rare ? 0 : Math.min(40, run.rarePity + 6)
   const maxHp = currentBuild(run).stats.maxHp
   if (kind === 'treasure') {
     // A free pick, as the route promises: one part, the cinder cache (sometimes an ember instead), and a large weld.
@@ -399,6 +430,51 @@ export function makeOffers(run: RunState, save: SaveData, kind: OfferKind): Offe
   return offers.slice(0, 3)
 }
 
+/**
+ * Banish the part on one card: it leaves the pool for the rest of the run and
+ * the card is redrawn from the same table. Returns null when nothing changed.
+ */
+export function banishOffer(run: RunState, save: SaveData, offers: Offer[], index: number): Offer[] | null {
+  const target = offers[index]
+  if (!target || target.kind !== 'component' || !target.componentId || run.banishes <= 0) return null
+  run.banishes--
+  run.banished.push(target.componentId)
+  const showing = new Set(offers.map((o) => o.componentId).filter(Boolean))
+  const pool = availableComponents(run, save).filter((c) => !showing.has(c.id))
+  // The same table the screen was dealt from: banishing a common card must not upgrade the odds.
+  const pick = weighted(run.rng, pool, offerBias(run.offerKind), run.rarePity)[0]
+  const next = offers.slice()
+  next[index] = pick
+    ? componentOffer(run, save, pick.id)
+    : { kind: 'cinders', title: 'Cinders', description: 'Nothing else fits. Take the metal instead.', hints: [], amount: 14 }
+  return next
+}
+
+/**
+ * Reactions this part would bring within one part of firing, that the ball
+ * does not already have. Shown on cards so a build-defining reaction is
+ * something you can steer toward, not something you need a wiki for.
+ */
+export function nearReactions(run: RunState, slot: Slot, id: string, save: SaveData): string[] {
+  const next = buildFor({ ...run.ids, [slot]: id }, run.mods)
+  const now = currentBuild(run)
+  const comp = COMPONENT_MAP[id]
+  if (!comp) return []
+  const active = new Set(next.synergies.map((s) => s.id))
+  const out: string[] = []
+  for (const syn of SYNERGIES) {
+    if (active.has(syn.id)) continue
+    if (!syn.requires.some((r) => comp.tags.includes(r.tag))) continue
+    const missing = syn.requires.reduce((n, r) => n + Math.max(0, r.count - (next.tags[r.tag] ?? 0)), 0)
+    const before = syn.requires.reduce((n, r) => n + Math.max(0, r.count - (now.tags[r.tag] ?? 0)), 0)
+    if (missing === 1 && missing < before) {
+      const need = syn.requires.find((r) => (next.tags[r.tag] ?? 0) < r.count)!
+      out.push(`${synergyLabel(syn, save)}: needs ${need.tag}`)
+    }
+  }
+  return out.slice(0, 2)
+}
+
 /** Cinders for passing on every card and keeping the ball as it is. */
 export function salvageValue(kind: OfferKind): number {
   return kind === 'elite' ? 14 : kind === 'treasure' ? 12 : 8
@@ -406,14 +482,22 @@ export function salvageValue(kind: OfferKind): number {
 
 export function availableComponents(run: RunState, save: SaveData): ComponentDef[] {
   const equipped = new Set(Object.values(run.ids))
-  return COMPONENTS.filter((c) => c.pool === 'standard' && save.unlocked.includes(c.id) && !equipped.has(c.id))
+  return COMPONENTS.filter((c) => c.pool === 'standard' && save.unlocked.includes(c.id) && !equipped.has(c.id) && !run.banished.includes(c.id))
 }
 
-function weighted<T extends { rarity: Rarity }>(rng: () => number, list: T[], bias: Rarity[]): T[] {
+/** Which rarities a reward table leans toward. */
+function offerBias(kind: OfferKind): Rarity[] {
+  if (kind === 'elite' || kind === 'treasure') return ['rare', 'epic', 'uncommon', 'rare']
+  if (kind === 'soft') return ['common', 'uncommon', 'common']
+  return ['common', 'uncommon', 'rare', 'common', 'uncommon']
+}
+
+function weighted<T extends { rarity: Rarity }>(rng: () => number, list: T[], bias: Rarity[], pity = 0): T[] {
   if (!list.length) return []
   const weight = (r: Rarity) => {
     const base = { common: 46, uncommon: 30, rare: 16, epic: 7, legendary: 1 }[r]
-    return base + (bias.includes(r) ? 18 : 0)
+    const lift = r === 'rare' ? pity : r === 'epic' ? pity * 0.5 : 0
+    return base + (bias.includes(r) ? 18 : 0) + lift
   }
   const scored = list.map((item) => ({ item, w: weight(item.rarity) }))
   const total = scored.reduce((s, i) => s + i.w, 0)
@@ -477,6 +561,7 @@ export function componentOffer(run: RunState, save: SaveData, id: string): Offer
     replaces: p.replaced ? { id: p.replaced.id, name: p.replaced.name } : null,
     gained: p.gained,
     lost: p.lost,
+    near: nearReactions(run, comp.slot, id, save),
     hp: p.hp,
     energyMax: p.energyMax,
     hints: [],
@@ -488,7 +573,7 @@ export function makeShop(run: RunState, save: SaveData): ShopItem[] {
   const heat = heatOf(run.heat)
   const price = (n: number) => Math.round(n * heat.shopPrice)
   const pool = availableComponents(run, save)
-  const a = pool.length ? weighted(run.rng, pool, ['uncommon', 'rare'])[0] : undefined
+  const a = pool.length ? weighted(run.rng, pool, ['uncommon', 'rare'], run.rarePity)[0] : undefined
   const rest = pool.filter((c) => c !== a)
   const b = rest.length ? weighted(run.rng, rest, ['rare', 'epic'])[0] : undefined
   const maxHp = currentBuild(run).stats.maxHp
@@ -586,6 +671,14 @@ export interface SavedRun {
   decisions: string[]
   /** Which reward table a pending reward screen came from (salvage value, rerolls). */
   offerKind?: OfferKind
+  banishes?: number
+  banished?: string[]
+  rarePity?: number
+  grades?: RoomGrade[]
+  rams?: number
+  cleanRams?: number
+  daily?: string | null
+  assist?: number
 }
 
 export function serializeRun(run: RunState): SavedRun {
@@ -622,6 +715,14 @@ export function serializeRun(run: RunState): SavedRun {
     route: run.route.map((r) => ({ ...r })),
     decisions: [...run.decisions],
     offerKind: run.offerKind,
+    banishes: run.banishes,
+    banished: [...run.banished],
+    rarePity: run.rarePity,
+    grades: run.grades.map((g) => ({ ...g })),
+    rams: run.rams,
+    cleanRams: run.cleanRams,
+    daily: run.daily,
+    assist: run.assist,
   }
 }
 
@@ -682,5 +783,18 @@ export function restoreRun(data: unknown): RunState | null {
   run.decisions = strs(d.decisions)
   const kinds: OfferKind[] = ['combat', 'elite', 'soft', 'treasure']
   run.offerKind = kinds.includes(d.offerKind as OfferKind) ? d.offerKind! : 'combat'
+  run.banishes = num(d.banishes, 0, 9, 2)
+  run.banished = strs(d.banished).filter((id) => !!COMPONENT_MAP[id])
+  run.rarePity = num(d.rarePity, 0, 60, 0)
+  const grades = ['S', 'A', 'B', 'C']
+  run.grades = Array.isArray(d.grades)
+    ? d.grades.filter((g) => g && typeof g.room === 'string' && grades.includes(g.grade)).map((g) => ({
+      room: g.room, grade: g.grade, time: num(g.time, 0, 1e5, 0), par: num(g.par, 0, 1e4, 0), taken: num(g.taken, 0, 1e6, 0), bonus: num(g.bonus, 0, 99, 0),
+    }))
+    : []
+  run.rams = num(d.rams, 0, 1e7, 0)
+  run.cleanRams = num(d.cleanRams, 0, run.rams, 0)
+  run.daily = typeof d.daily === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.daily) ? d.daily : null
+  run.assist = num(d.assist, 0, 1, 1)
   return run
 }

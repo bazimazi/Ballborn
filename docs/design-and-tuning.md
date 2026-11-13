@@ -84,7 +84,7 @@ One ram at 80% of top speed into the open heart, then three seconds of after-eff
 | fire | 35 | 58 | burn 24, effects 10 |
 | magnetic | 35 | 35 | arcs 13 |
 
-Every representative build damages the heart. Light builds need many clean rams (about 30 at this rate for 860 integrity at Heat 0), which is the intended weakness; they have the speed and hop to get them. This is a measured estimate, not a playtested kill time.
+Every representative build damages the heart. Light builds need many clean rams (about 33 at this rate for 940 integrity at Heat 0; it was 860 before the route grew from five rooms to seven), which is the intended weakness; they have the speed and hop to get them. This is a measured estimate, not a playtested kill time.
 
 ## Representative build profiles
 
@@ -193,7 +193,34 @@ The settings still apply to all of it. **Screen shake** scales trauma and kick. 
 
 The painted art in `public/art/foundry-v1/images/` ships as WebP (about 250 KB in total, down from 6 MB of PNG). It is used as the title backdrop, a far parallax layer in rooms, and the Colossus intro portrait. If an image fails to load, the procedural scene is drawn instead.
 
+## The overhaul (November 2026)
+
+Research input: Celeste's forgiveness write-up, Vlambeer's "Art of Screenshake", Slay the Spire's card-reward odds, Vampire Survivors' banish, Hades' rerolls and Pact of Punishment, Spelunky's Daily Challenge, Balatro's signposting, Poki and CrazyGames onboarding benchmarks, the Game Accessibility Guidelines and Xbox guideline 118 (photosensitivity), and Chris Wilson's "two clocks" Web Audio scheduling. Items the game already had (coyote time, hop buffer, speed ring, look-ahead, camera kick, rerolls, boss punish window) were kept as they were.
+
+| Change | Rule | Numbers |
+| --- | --- | --- |
+| Route | 8 layers: combat/traversal, combat/challenge/combat, treasure/event/shop, elite/combat/challenge, event/traversal/combat, elite/challenge/combat, shop/treasure, boss | 7 rooms; about 12 minutes (CrazyGames reports ~13-minute action sessions) |
+| Depth scaling | Construct integrity per layer | +6.5% (was +8%); the Colossus 940 (was 860) |
+| Run scrap | Death 4 + 2.4 per room + 5 per elite; victory 24 + 3 per room + 10 per heat | Keeps scrap per run near the old five-room totals |
+| Grades | Pace (≤ par 2, ≤ 1.5× par 1) + shell (untouched 2, ≤ 12% 1); judged when the gate opens, or at the exit for open traversals | Par = 6 + width/240 + 3.2 per construct (elites 2.5×); survival = timer + 4; S/A/B/C pay 10/6/3/0 cinders |
+| Score | Rooms 100, elites 150, constructs 10, best combo 15, grades S/A/B/C 160/100/45/10, Colossus 1,000; × (1 + 0.25 × heat); assist cuts (1 − assist) / 2 | Shown line by line on the summary |
+| Daily Forge | FNV-1a hash of the local date; Heat 0; best and attempts kept per day | Same date, same route |
+| Banish | Two per run; the part leaves the pool, the card is redrawn from the same table | |
+| Rarity pity | +6 to rare weight (+3 epic) per reward screen with no rare part; resets on one | Cap +40 |
+| Reaction hints | A dashed chip when the part brings an inactive reaction to exactly one missing tag | At most two per card |
+| Elite affixes | One per elite (room stream): Hasted ×1.45 move, ×1.35 fire rate; Plated armor gate +6 (min 20) and ×0.85; Volatile bursts on death (125 px, 18); Magnetic tow 560 | Never in the lab |
+| Ram Hound | Wind-up 0.62 s (shake, red chevrons), charge 0.9 s at 5.4× walk speed; wall: dazed 1.3 s, end of run 0.9 s; a caught ball takes 1.15× contact; a head-on ram during a charge deals ×1.5 (`COUNTER`) and dazes it 1.2 s | 84 integrity, mass 1.6 |
+| Off-screen arrows | Edge arrows for unseen constructs, sized by distance, red and pulsing while one winds up | |
+| Flash limit | A second flash within 0.34 s is cut to 30% | About 3 per second at most |
+| Victim shake | A struck construct rattles during the hit pause (real time) | Up to 3.2 px |
+| Music | 116 bpm rooms, 128 bpm boss (+6 per phase), 78 bpm menu; layers by intensity: bass > 0.12, anvil > 0.25, hats > 0.3, four-on-the-floor > 0.55, sixteenth hats > 0.62, arpeggio > 0.66 | Kills duck the music 30% for 60 ms, phases 70% |
+
+New rooms: **Hound Kennel** (combat; two hounds, a slag gap with a stepping plate) and **Charge Yard** (elite; an elite hound, a bolt, a grunt). New achievements: Matador, Perfect Pour, Daily Smith.
+
 ## Open tuning questions for playtests
+
+- Are the par times fair for a first run, or should S be rarer still? (Par assumes a player who already rams cleanly.)
+- Is a seven-room route the right length on phones?
 
 - Is 55% of top speed the right clean-ram threshold for light builds on short rooms?
 - Heavy's 61 px hop: does it feel deliberate or punishing on stair rooms?

@@ -14,7 +14,7 @@
     {
       "name": "ball moved under keyboard input",
       "ok": true,
-      "detail": "x=1569"
+      "detail": "x=1586"
     },
     {
       "name": "tutorial clear reaches the reward screen",
@@ -79,15 +79,40 @@
     {
       "name": "controller d-pad moves menu focus",
       "ok": true,
-      "detail": "Launch run -> Replay ignition"
+      "detail": "Launch run -> Daily Forge2026-11-13 · not yet run"
     },
     {
       "name": "controller A activates the focused button",
       "ok": true,
-      "detail": "play"
+      "detail": "map"
     },
     {
       "name": "focus loss pauses the room",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "touch screens get touch controls",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "touch stick rolls the ball",
+      "ok": true,
+      "detail": "150 -> 822"
+    },
+    {
+      "name": "touch hop button hops",
+      "ok": true,
+      "detail": "vy=-617"
+    },
+    {
+      "name": "touch pause button pauses",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "lab parts swap by tap without pausing",
       "ok": true,
       "detail": ""
     },
@@ -99,52 +124,50 @@
     {
       "name": "lab soak (15 simulated minutes) keeps entity counts bounded",
       "ok": true,
-      "detail": "{\"minute\":14,\"enemies\":4,\"particles\":12,\"bullets\":1,\"pickups\":1,\"floaters\":0}"
+      "detail": "{\"minute\":14,\"enemies\":4,\"particles\":8,\"bullets\":2,\"pickups\":0,\"floaters\":0}"
     },
     {
       "name": "no console errors",
-      "ok": false,
-      "detail": "Failed to load resource: net::ERR_CONNECTION_TIMED_OUT"
+      "ok": true,
+      "detail": ""
     }
   ],
-  "errors": [
-    "Failed to load resource: net::ERR_CONNECTION_TIMED_OUT"
-  ],
+  "errors": [],
   "perf": {
     "tutorialRoll": {
-      "frames": 290,
+      "frames": 276,
       "p50": 16.699999999999818,
-      "p95": 16.800000000000182,
-      "p99": 17,
-      "max": 166.70000000000027
+      "p95": 17.100000000000364,
+      "p99": 50,
+      "max": 328.4000000014903
     },
     "labRealtime60s": {
       "frames": 3601,
       "p50": 16.69999999999709,
-      "p95": 16.900000000001455,
-      "p99": 17.30000000000291,
-      "max": 19.599999999998545,
-      "particles": 0,
-      "enemies": 4,
-      "voices": 1
+      "p95": 17,
+      "p99": 17.80000000000291,
+      "max": 27.399999999997817,
+      "particles": 11,
+      "enemies": 3,
+      "voices": 12
     },
     "frameCostMs": {
       "ordinary": {
-        "frames": 599,
-        "p50": 1.300000000745058,
-        "p95": 2.599999999627471,
-        "p99": 3.400000000372529,
-        "max": 3.900000000372529
+        "frames": 600,
+        "p50": 0.7000000029802322,
+        "p95": 1.1000000014901161,
+        "p99": 1.3999999985098839,
+        "max": 2.100000001490116
       },
       "stress": {
         "frames": 900,
-        "p50": 1.299999998882413,
-        "p95": 3.099999999627471,
-        "p99": 3.799999998882413,
-        "max": 5.300000000745058
+        "p50": 1,
+        "p95": 1.3999999985098839,
+        "p99": 1.7000000029802322,
+        "max": 2.8000000044703484
       },
-      "stressEntities": 11,
-      "stressParticles": 28
+      "stressEntities": 16,
+      "stressParticles": 35
     }
   },
   "layout": [
@@ -247,81 +270,121 @@
       "size": "1280x720@150%",
       "view": "settings",
       "clipped": []
+    },
+    {
+      "size": "phone-landscape",
+      "view": "title",
+      "clipped": []
+    },
+    {
+      "size": "phone-landscape",
+      "view": "map",
+      "clipped": []
+    },
+    {
+      "size": "phone-landscape",
+      "view": "reward",
+      "clipped": []
+    },
+    {
+      "size": "phone-landscape",
+      "view": "settings",
+      "clipped": []
+    },
+    {
+      "size": "phone-portrait",
+      "view": "title",
+      "clipped": []
+    },
+    {
+      "size": "phone-portrait",
+      "view": "map",
+      "clipped": []
+    },
+    {
+      "size": "phone-portrait",
+      "view": "reward",
+      "clipped": []
+    },
+    {
+      "size": "phone-portrait",
+      "view": "settings",
+      "clipped": []
     }
   ],
   "soak": {
     "simMinutes": 15,
-    "wallSeconds": 0.2825999999996275,
-    "perTickMs": 0.0026166666666632174,
-    "heapDeltaMB": 9.209226,
+    "wallSeconds": 0.2695,
+    "perTickMs": 0.0024953703703703705,
+    "heapDeltaMB": 8.64318,
     "samples": [
       {
         "minute": 0,
-        "enemies": 11,
-        "particles": 36,
+        "enemies": 15,
+        "particles": 46,
         "bullets": 3,
-        "pickups": 13,
+        "pickups": 4,
         "floaters": 0
       },
       {
         "minute": 1,
         "enemies": 4,
-        "particles": 8,
-        "bullets": 2,
-        "pickups": 2,
+        "particles": 12,
+        "bullets": 1,
+        "pickups": 1,
         "floaters": 0
       },
       {
         "minute": 2,
         "enemies": 4,
         "particles": 8,
-        "bullets": 1,
+        "bullets": 2,
         "pickups": 0,
         "floaters": 0
       },
       {
         "minute": 3,
-        "enemies": 2,
-        "particles": 8,
-        "bullets": 1,
-        "pickups": 1,
-        "floaters": 2
-      },
-      {
-        "minute": 4,
-        "enemies": 3,
+        "enemies": 4,
         "particles": 8,
         "bullets": 1,
         "pickups": 3,
         "floaters": 0
       },
       {
-        "minute": 5,
-        "enemies": 3,
-        "particles": 12,
-        "bullets": 1,
+        "minute": 4,
+        "enemies": 4,
+        "particles": 8,
+        "bullets": 2,
         "pickups": 0,
-        "floaters": 1
+        "floaters": 0
+      },
+      {
+        "minute": 5,
+        "enemies": 4,
+        "particles": 8,
+        "bullets": 2,
+        "pickups": 0,
+        "floaters": 0
       },
       {
         "minute": 6,
         "enemies": 4,
-        "particles": 9,
+        "particles": 8,
         "bullets": 1,
-        "pickups": 1,
+        "pickups": 0,
         "floaters": 0
       },
       {
         "minute": 7,
         "enemies": 4,
-        "particles": 10,
+        "particles": 8,
         "bullets": 1,
         "pickups": 0,
         "floaters": 0
       },
       {
         "minute": 8,
-        "enemies": 4,
+        "enemies": 3,
         "particles": 8,
         "bullets": 0,
         "pickups": 1,
@@ -331,33 +394,33 @@
         "minute": 9,
         "enemies": 4,
         "particles": 8,
-        "bullets": 2,
-        "pickups": 0,
+        "bullets": 0,
+        "pickups": 1,
         "floaters": 0
       },
       {
         "minute": 10,
         "enemies": 4,
-        "particles": 8,
-        "bullets": 1,
+        "particles": 15,
+        "bullets": 2,
         "pickups": 0,
-        "floaters": 0
+        "floaters": 1
       },
       {
         "minute": 11,
         "enemies": 4,
         "particles": 8,
-        "bullets": 2,
+        "bullets": 1,
         "pickups": 1,
         "floaters": 0
       },
       {
         "minute": 12,
         "enemies": 4,
-        "particles": 14,
-        "bullets": 1,
-        "pickups": 2,
-        "floaters": 1
+        "particles": 8,
+        "bullets": 2,
+        "pickups": 0,
+        "floaters": 0
       },
       {
         "minute": 13,
@@ -370,9 +433,9 @@
       {
         "minute": 14,
         "enemies": 4,
-        "particles": 12,
-        "bullets": 1,
-        "pickups": 1,
+        "particles": 8,
+        "bullets": 2,
+        "pickups": 0,
         "floaters": 0
       }
     ]

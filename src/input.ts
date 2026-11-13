@@ -76,6 +76,8 @@ export class Input {
   /** True while the player is on a touch screen; the last input device decides. */
   touchMode = false
   onTouchMode: ((on: boolean) => void) | null = null
+  /** Forget fingers held on the on-screen controls (set by the touch layer). */
+  onTouchReset: (() => void) | null = null
   /** Keys the browser should not act on during play (scrolling, focus moves). */
   private static PLAY_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab']
 
@@ -87,7 +89,8 @@ export class Input {
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.loseFocus()
     })
-    window.addEventListener('pointerdown', (e) => this.setTouchMode(e.pointerType === 'touch'), true)
+    // A stylus is a finger here: it needs the on-screen controls too.
+    window.addEventListener('pointerdown', (e) => this.setTouchMode(e.pointerType === 'touch' || e.pointerType === 'pen'), true)
     window.addEventListener('mousemove', (e) => {
       this.mx = e.clientX
       this.my = e.clientY
@@ -97,7 +100,7 @@ export class Input {
         this.mx = e.clientX
         this.my = e.clientY
         // Fingers steer with the on-screen stick; only a mouse or pen steers toward the pointer.
-        if (e.pointerType === 'touch') return
+        if (e.pointerType === 'touch' || e.pointerType === 'pen') return
         if (e.button === 0) {
           this.mouseLeft = true
           try {
@@ -156,7 +159,10 @@ export class Input {
       else if (this.context === 'play') this.keys.add(e.code)
       return
     }
-    this.setTouchMode(false)
+    // A phone's on-screen keyboard (typing a seed) is not a switch to a physical keyboard.
+    const target = e.target as HTMLElement | null
+    const typing = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
+    if (!typing && e.key !== 'Unidentified' && e.keyCode !== 229) this.setTouchMode(false)
     if (!this.keys.has(e.code)) {
       this.edges.add(e.code)
       if (this.context === 'play') {
@@ -222,6 +228,7 @@ export class Input {
 
   private loseFocus(): void {
     this.reset()
+    this.onTouchReset?.()
     this.onFocusLost?.()
   }
 
@@ -237,9 +244,13 @@ export class Input {
     const left = this.held('left') || this.stick.x < -0.3 || this.pad.left
     const right = this.held('right') || this.stick.x > 0.3 || this.pad.right
     const up = this.held('up') || this.pad.hop || t.hop
-    const down = this.held('down') || this.stick.y > 0.55 || this.pad.down || t.y > 0.6
+    // The touch stick reads up and down only when pushed steeply (within ~30 degrees of vertical):
+    // a thumb rolling "right and a little down" must not fast-fall or dash into the floor.
+    const tMag = Math.hypot(t.x, t.y)
+    const tAng = tMag > 0.5 ? Math.atan2(t.y, Math.abs(t.x)) : 0
+    const down = this.held('down') || this.stick.y > 0.55 || this.pad.down || tAng > 1.05
     // Pushing the touch stick up aims abilities upward without hopping.
-    const aimUp = t.y < -0.6
+    const aimUp = tAng < -1.05
     let x = (right ? 1 : 0) - (left ? 1 : 0)
     // Analog steering wins when a stick is the only input.
     const analog = t.x !== 0 ? t.x : this.stick.x
@@ -294,8 +305,14 @@ export class Input {
   }
 
   private firstPad(): Gamepad | null {
-    const pads = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : []
-    for (const p of pads ?? []) if (p && p.connected) return p
+    let pads: (Gamepad | null)[] = []
+    try {
+      // Throws in a cross-origin frame without gamepad permission.
+      pads = typeof navigator !== 'undefined' && navigator.getGamepads ? Array.from(navigator.getGamepads()) : []
+    } catch {
+      return null
+    }
+    for (const p of pads) if (p && p.connected) return p
     return null
   }
 

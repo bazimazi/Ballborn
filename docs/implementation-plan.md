@@ -84,6 +84,103 @@ A play-through in the browser plus a code review of the simulation, run, and fro
 - **Defects, interface:** a key held through a screen change pressed the newly focused button (Space took a reward card or relaunched a run past the death summary; a held Esc paused and resumed at once). Esc cancelling a rebind also left Settings; a rebind stayed armed after leaving Settings; binding to Space, an arrow, or F silently double-bound it. The pause key and controller Start did not resume from the pause menu. The HUD always said Tab and Esc. Focus dropped to the page after a purchase or the last reroll. "Same seed" stuck to every later run. The build sheet ignored run modifiers. One-frame audio and HUD cues could repeat every frame while paused. Map labels were clipped at L and XL. The lab strip ran off-screen at 800×600. Controller A did nothing in the build sheet. The discovery toast said only "New".
 - **Not changed:** replaying the tutorial while a run is saved still replaces that run without asking (the "New run" button does the same and says so); toasts can briefly cover a menu header.
 
+## Overhaul pass (2026-11-13) - done
+
+Researched world-class roguelites, game feel, web onboarding, boss readability, adaptive audio, and accessibility guidance, then changed what the game lacked. Rules and numbers are in `design-and-tuning.md` ("The overhaul"); tests are in `tests/overhaul.test.ts`.
+
+- **Run:** route from 5 rooms to 7 plus the Colossus, with a shop or treasure layer before the hold; depth scaling, boss integrity, and scrap rebalanced for the length.
+- **Speed pays:** room grades (S to C) against par with cinder bonuses, shown on the gate banner and the reward screen; clean-ram share tracked per run.
+- **Rewards:** banish (two per run), Slay the Spire style rarity pity, and "one part from a reaction" chips on cards.
+- **Retention:** run score with a line-by-line breakdown, best score, Daily Forge (shared seed per local date, best per day), and a copyable result card.
+- **Variety:** elite affixes (Hasted, Plated, Volatile, Magnetic); the Ram Hound (telegraphed charger with a counter-hit and a punish window); two new rooms; three achievements.
+- **Readability and comfort:** off-screen construct arrows, victim shake, a flash rate limit.
+- **Onboarding:** a first-time player's one big button is Play, which is the tutorial.
+- **Audio:** adaptive score (`src/music.ts`) replacing the eight-step pulse; hall reverb, bus compressor, ducking, impact pitch variance, chimes in the score's key.
+- **Smoke test:** the tutorial roll no longer races a lucky first-ram kill out of the room.
+- Not done: Hades-style stackable heat modifiers, per-part damage on the summary, a funnel/analytics hook (needs a decision about data collection), slopes.
+
+## Feel pass: smoothness and phones (2026-11-13) - done
+
+A four-way review (simulation and feel, input and touch, game flow and saves, rendering and audio), with fixes. Regression tests are in `tests/feel.test.ts`.
+
+- **Smoothness:** every moving thing is drawn between ticks, not just the ball: constructs, bolts, loot, the Colossus and its rivets, moving platforms, sparks, floaters, and decorative timers. Before this, they jumped against the camera at 90, 120, and 144 Hz and froze on zero-tick frames during slow motion. The ball's spin now accumulates (it rolls visibly), the trail no longer leads the ball, and the camera's look-ahead eases, so a bounce does not yank the view. Hit pause starts on the tick of the hit and no longer stacks. Close pauses share a cooldown. Shake is no longer added twice per ram.
+- **Robustness:** an exception in one frame no longer stops the loop. `roundRect` is polyfilled for iOS 15 and older Android WebViews. `getGamepads` is guarded.
+- **Feel and combat:**
+  - A dash or burst that meets a construct during its phase still lands the ram (phase blocks recoil and bolts only).
+  - A hop pressed in the air is held until the next floor contact while the button stays down.
+  - Small floor bounces die out.
+  - Restitution is capped at 0.95, so no bounce gains energy.
+  - Shooters only wind up within about a screen of the ball. A ram during a wind-up spoils the shot, and there are no point-blank shots inside the ball.
+  - Fliers steer proportionally instead of buzzing.
+  - A hound COUNTER needs real speed.
+  - A rivet or Colossus touch pushes out by the overlap, not by 78 px.
+  - Moving platforms neither jump on their first tick nor lift the ball twice.
+  - Spawns in the middle of a fight are visible at once.
+  - A slam spent on a construct is not stored for the next landing.
+  - A hop off a spring is never weaker than the spring.
+- **Touch:**
+  - The stick reads up and down only within about 30 degrees of vertical, so a drifting thumb no longer fast-falls or dashes into the floor.
+  - Stick travel follows Control size.
+  - A new thumb always takes the stick, and stale fingers are cleared on focus loss.
+  - A stylus counts as touch, and the on-screen keyboard (seed field) no longer flips the game into keyboard mode.
+  - Pinch-zoom and long-press menus are blocked.
+  - The Android back gesture acts like Esc during play.
+  - Touch targets are at least 44 px.
+  - Banish takes two taps on touch.
+  - On short landscape phones the ability dial sits low, beside hop, off the lane where constructs come in.
+  - The world is drawn larger on phones (`fitZoom`).
+- **Menus:**
+  - Intro animations play on entering a screen, not on every rebuild.
+  - Every scroller (map, card carousel, part strip) keeps its position across a rebuild, sideways included.
+  - The picked room's Go stays in view on short screens, and the room's advice shows there.
+  - Nothing is auto-focused on touch.
+  - The build sheet is no longer covered by toasts.
+  - New-construct notes come as one toast after the room banner.
+  - Very short phones get tighter reward cards.
+- **Run and saves:**
+  - Reloading during the death beat no longer brings the room back.
+  - The beat after a room ends cannot be paused into, which fixes a frozen lab after abandoning there.
+  - Starting a new run, daily, or tutorial over a saved run asks once.
+  - The score's assist cut uses the lowest assist any room was played at.
+  - The tutorial rooms no longer count toward the route's rooms, score, and scrap.
+  - Pity is judged on the cards actually shown.
+  - A banish redraws from the screen's own rarity table.
+  - A failed checkpoint write removes the stale checkpoint.
+  - Event outcomes that throw are caught.
+  - The shop's patch cannot be bought at full integrity.
+  - "Same seed" replays at the original heat (and a daily replays as the daily).
+  - The Colossus's grade shows on its banner.
+  - The share line says "Left after N rooms" for an abandoned run.
+  - Seeds are capped at 32 bits.
+- **Performance and battery:**
+  - The canvas is opaque.
+  - The backing store has a pixel budget and an adaptive resolution scale.
+  - The paused world is drawn once, not every frame.
+  - The menu backdrop runs at 30 fps on touch.
+  - Panels are not backdrop-blurred on coarse pointers.
+  - HUD bars fill with `transform: scaleX`, not width.
+  - Particles are no longer scaled twice by the particles setting, and are lighter on touch.
+  - `hypot` is plain `sqrt`.
+- **Audio:**
+  - The context is suspended while the tab is hidden.
+  - iOS plays through the silent switch (`audioSession`).
+  - Phones have a smaller voice budget and a shorter reverb.
+  - Muted effects build no nodes.
+  - Per-frame automation is sent only on change.
+  - Ducking holds the live value.
+  - The music lookahead is 300 ms, so main-thread stalls no longer flam or skip notes.
+- **Rendering details:**
+  - The low-integrity vignette fits portrait screens.
+  - Cinders fly to the real counter.
+  - Off-screen arrows sit below the HUD.
+  - The parallax layer is not rebuilt as the phone's URL bar moves.
+  - Card previews run at the same pace at any refresh rate.
+- Not done:
+  - The Daily Forge shares its route, but later draws (offers, shops, events) still depend on each player's unlocks.
+  - Two open tabs can still overwrite each other's save.
+  - PNG home-screen icons.
+  - Cached gradients and batched particle draws (no profiling showed them as the bottleneck on desktop; check on a low-end phone first).
+
 ## Deferred, in priority order
 
 1. Human playtests with about five new players (protocol in `validation-report.md`).

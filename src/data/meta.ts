@@ -29,6 +29,9 @@ export const ACHIEVEMENTS: AchievementDef[] = deepFreeze([
   { id: 'heat-tempered', name: 'Heat Tempered', description: 'Win at Forge Heat II or higher.', target: 1, scrap: 24, embers: 1 },
   { id: 'slam-poetry', name: 'Stamp', description: 'Break a construct with a Ground Slam.', target: 1, scrap: 8 },
   { id: 'heavy-hand', name: 'Heavy Hand', description: 'Deal 100 damage in a single collision.', target: 100, scrap: 10 },
+  { id: 'matador', name: 'Matador', description: 'Meet a Ram Hound’s charge head-on.', target: 1, scrap: 10 },
+  { id: 'perfect-pour', name: 'Perfect Pour', description: 'Earn four S grades in one run.', target: 4, scrap: 16, embers: 1 },
+  { id: 'daily-smith', name: 'Daily Smith', description: 'Score 2,500 points on a Daily Forge.', target: 2500, scrap: 12 },
 ])
 
 export const FUSIONS: FusionRecipe[] = deepFreeze([

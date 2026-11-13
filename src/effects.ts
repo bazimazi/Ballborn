@@ -10,6 +10,9 @@ export interface FxEnemy {
   kind: 'enemy' | 'boss' | 'rivet'
   x: number
   y: number
+  /** Position at the start of the latest tick, for render interpolation. */
+  px?: number
+  py?: number
   vx: number
   vy: number
   r: number

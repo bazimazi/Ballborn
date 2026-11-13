@@ -8,10 +8,12 @@ import { ROOM_MAP } from './data/rooms'
 import { applyEventChoice, rollEvent, type GameEvent } from './events'
 import { Input, type FrameInput, type MenuInput } from './input'
 import { FixedStepper } from './loop'
+import { dailyKey, dailySeed, GRADE_CINDERS, gradeRoom, gradeStrip, parTime, runScore } from './grade'
 import { selfCheckPhysics } from './physics'
 import { Juice } from './juice'
 import { ballView, CardPreview, drawMenuScene, drawWorld, fitZoom, makeCamera, screenToWorld, updateCamera, viewRect, type Camera } from './render'
 import {
+  banishOffer,
   buildFor,
   createRun,
   currentBuild,
@@ -46,7 +48,7 @@ import {
   type SaveData,
   type Store,
 } from './save'
-import { Simulation, type SimListeners } from './sim'
+import { AFFIXES, Simulation, type Affix, type SimListeners } from './sim'
 import {
   abandonScrap,
   buyItem,
@@ -128,7 +130,8 @@ export class Game {
     if (loaded.status === 'recovered') this.saveWarning = 'Your save could not be read. It was kept in a backup slot and a fresh save started.'
     if (loaded.status === 'migrated') this.toast('Save updated. Embers you had are now spendable at the Annealing and the Crucible.')
     this.view = document.getElementById('view') as HTMLCanvasElement
-    const ctx = this.view.getContext('2d')
+    // Every frame paints the whole canvas, so it can be opaque: the compositor then skips blending it with the page.
+    const ctx = this.view.getContext('2d', { alpha: false }) ?? this.view.getContext('2d')
     if (!ctx) throw new Error('Canvas 2D is not available in this browser.')
     this.ctx = ctx
     this.screenEl = document.getElementById('screen')!
@@ -137,10 +140,10 @@ export class Game {
     this.input.onFocusLost = () => this.onFocusLost()
     this.input.onTouchMode = (on) => {
       document.body.classList.toggle('touch', on)
-      if (this.screen !== 'play') this.refresh()
+      this.deferTouchRefresh()
     }
     for (const el of Array.from(document.querySelectorAll<HTMLElement>('[data-icon]'))) el.innerHTML = svg(el.dataset.icon as IconName)
-    attachTouchControls(this.input, document.getElementById('hud')!)
+    this.input.onTouchReset = attachTouchControls(this.input, document.getElementById('hud')!)
     this.input.onPadChange = (connected) => {
       this.toast(connected ? 'Controller connected.' : 'Controller disconnected.')
       if (!connected) this.onFocusLost()
@@ -152,6 +155,17 @@ export class Game {
     window.addEventListener('pointerdown', () => this.audio.resume())
     // Some mobile browsers only unlock audio on the end of a touch.
     window.addEventListener('touchend', () => this.audio.resume(), { passive: true })
+    // A hidden tab makes no sound: the rolling hiss and the reverb would otherwise run on in the background.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.audio.suspend()
+      else this.audio.resume()
+    })
+    // Long-press on a menu icon must not open the image menu; pinch must not zoom the page (iOS ignores user-scalable).
+    window.addEventListener('contextmenu', (e) => {
+      if (!(e.target instanceof HTMLInputElement && e.target.type === 'text')) e.preventDefault()
+    })
+    document.addEventListener('gesturestart', (e) => e.preventDefault())
+    this.trapBack()
     this.screenEl.addEventListener('pointermove', (e) => this.tiltCard(e))
     this.screenEl.addEventListener('pointerout', (e) => this.untiltCard(e))
     loadArt()
@@ -172,11 +186,12 @@ export class Game {
     const labLive = this.lab && this.screen === 'lab' && !this.labPaused
     this.input.setContext(playing || labLive ? 'play' : 'menu')
     const input = this.input.sample()
-    if (input.pausePressed && this.screen === 'play') this.pause()
+    // The beat after a room ends is short and already decided: it cannot be paused into.
+    if (input.pausePressed && this.screen === 'play' && !this.outro) this.pause()
     else if (input.pausePressed && this.screen === 'lab') this.toggleLabPause()
     // The pause key (or controller Start) also leaves the pause menu, as it does in the lab.
     else if (input.pausePressed && this.screen === 'pause') this.back()
-    if (input.buildPressed && this.screen === 'play') {
+    else if (input.buildPressed && this.screen === 'play' && !this.outro) {
       this.buildOpen = !this.buildOpen
       this.say(this.buildOpen ? 'Build sheet open. Game paused.' : 'Build sheet closed.')
     }
@@ -205,14 +220,22 @@ export class Game {
   /** Run as many fixed ticks as the accumulator holds. Returns the interpolation factor. */
   private advance(input: FrameInput, realDt: number): number {
     const sim = this.sim!
-    const rect = this.view.getBoundingClientRect()
-    const mouse = input.mouseThrust ? screenToWorld(this.cam, input.mx - rect.left, input.my - rect.top, rect.width, rect.height) : null
+    let mouse: { x: number; y: number } | null = null
+    if (input.mouseThrust) {
+      const rect = this.view.getBoundingClientRect()
+      mouse = screenToWorld(this.cam, input.mx - rect.left, input.my - rect.top, rect.width, rect.height)
+    }
     const held = { ...input, hopPressed: false, abilityPressed: false }
     // Pressed edges belong to the first tick only; held input applies to every tick.
+    let froze = false
     const steps = this.stepper.advance(realDt, this.save.settings.gameSpeed * this.juice.timeScale, TUNE.maxFrame, (first) => {
       sim.step(first ? input : held, mouse)
-      return sim.done
+      // A hit pause starts on the tick of the hit: the frame freezes on the impact, not a few ticks after it.
+      froze = this.hitstop > 0 || (this.save.settings.hitPause && this.juice.hitstopRequest > 0)
+      return sim.done || froze
     })
+    // Time banked for the ticks skipped by the freeze is dropped, or it would run as a burst when the freeze ends.
+    if (froze) this.stepper.acc = Math.min(this.stepper.acc, TUNE.fixedDt * 0.999)
     // Edges pressed during a frame that ran no tick stay latched for the next one.
     if (steps > 0) this.input.consumeActions()
     if (this.run && !this.lab) {
@@ -234,7 +257,7 @@ export class Game {
   }
 
   private render(dt: number, now: number, alpha: number, frozen: boolean): void {
-    this.resize()
+    const resized = this.resize(dt)
     const w = this.view.clientWidth
     const h = this.view.clientHeight
     const s = this.save.settings
@@ -243,8 +266,11 @@ export class Game {
     const inWorld = !!this.sim && (this.screen === 'play' || this.screen === 'pause' || this.lab)
     if (inWorld && this.sim) {
       const moving = this.screen !== 'pause' && !this.buildOpen && !this.labPaused
+      // Paused, nothing moves: keep the last frame instead of repainting (and re-blurring the panel over it) every frame.
+      const still = !moving && this.stillDrawn === this.sim && !resized
+      this.stillDrawn = moving ? null : this.sim
       if (moving) {
-        updateCamera(this.cam, this.sim, dt, w, h, s.cameraMotion, alpha)
+        updateCamera(this.cam, this.sim, dt, w, h, s.cameraMotion, alpha, this.cameraEdgePad(w, h))
         const b = ballView(this.sim, alpha)
         juice.update(dt, this.sim, viewRect(this.cam, w, h), frozen, b.x, b.y)
         const off = juice.shakeOffset()
@@ -252,27 +278,39 @@ export class Game {
         this.cam.shakeY = off.y
         this.cam.rot = off.rot
       }
-      this.sim.fxLevel = s.particles
+      this.sim.fxLevel = s.particles * (this.input.touchMode ? 0.7 : 1)
       const outro = this.outro ? { kind: this.outro.kind, t: this.outro.t / this.outro.dur } : null
-      drawWorld(this.ctx, this.sim, this.cam, w, h, {
-        alpha, particles: s.particles, colorblind: s.colorblind, contrast: s.highContrast, flash: s.flashes ? this.flash : 0,
-        motion: s.cameraMotion, juice, time: now / 1000, iris: s.cameraMotion ? this.iris : 1, outro,
-      })
+      if (!still) {
+        drawWorld(this.ctx, this.sim, this.cam, w, h, {
+          alpha, particles: s.particles, colorblind: s.colorblind, contrast: s.highContrast, flash: s.flashes ? this.flash : 0,
+          motion: s.cameraMotion, juice, time: now / 1000, iris: s.cameraMotion ? this.iris : 1, outro, coinTarget: this.coinTarget(w, resized),
+        })
+      }
     } else {
+      this.stillDrawn = null
       juice.update(dt, null, { x: 0, y: 0, w, h }, false, 0, 0)
-      drawMenuScene(this.ctx, w, h, now / 1000, !s.cameraMotion, this.screen === 'title' ? 'title' : 'menu', juice)
+      // The menu backdrop drifts slowly: on phones 30 frames a second is plenty, and saves battery under the panels.
+      this.menuAcc += dt
+      if (resized || !this.input.touchMode || this.menuAcc >= 1 / 31) {
+        this.menuAcc = 0
+        drawMenuScene(this.ctx, w, h, now / 1000, !s.cameraMotion, this.screen === 'title' ? 'title' : 'menu', juice)
+      }
     }
     // One-frame cues: play them once, even when the world is frozen and juice.update() does not run to clear them.
     if (juice.armedEdge) this.audio.armed()
     juice.armedEdge = false
     const hudSim = inWorld ? this.sim : null
-    this.hud.update(hudSim, this.run, hudSim ? (this.run && !this.lab ? currentBuild(this.run) : hudSim.build) : null, this.save, this.prompt, this.buildOpen, dt)
+    // Banners and bar chips wait while the game is paused.
+    const hudDt = this.screen === 'pause' || this.buildOpen || this.labPaused ? 0 : dt
+    this.hud.update(hudSim, this.run, hudSim ? (this.run && !this.lab ? currentBuild(this.run) : hudSim.build) : null, this.save, this.prompt, this.buildOpen, hudDt)
+    document.body.classList.toggle('build-open', this.buildOpen && this.screen === 'play')
     if (juice.arrivals) this.hud.bumpCinders()
     juice.arrivals = 0
     this.stepPreviews(dt)
     const sim = this.sim
     this.audio.setState(this.screen === 'play' && !this.buildOpen ? (sim?.room.type === 'boss' ? 'boss' : 'play') : this.screen === 'pause' ? 'paused' : this.lab && !this.labPaused ? 'play' : 'menu')
     const rolling = sim && sim.grounded ? Math.min(1, hypot(sim.ball.vx, sim.ball.vy) / 900) : 0
+    this.audio.setIntensity(sim ? musicIntensity(sim) : 0.2, sim?.boss?.phase ?? 1)
     this.audio.update(dt, rolling, sim?.stats.mass ?? 1, sim?.build.visual.material ?? 'metal', !!sim && this.screen === 'play' && sim.lowHp)
   }
 
@@ -373,7 +411,8 @@ export class Game {
   }
 
   private onFocusLost(): void {
-    if (this.screen === 'play') this.pause()
+    // The beat after a room ends plays out (rAF stops while hidden); it is never paused into.
+    if (this.screen === 'play' && !this.outro) this.pause()
     else if (this.screen === 'lab' && !this.labPaused) this.toggleLabPause()
     this.stepper.reset()
   }
@@ -382,6 +421,7 @@ export class Game {
     this.pauseReturn = 'play'
     this.screen = 'pause'
     this.buildOpen = false
+    this.audio.setState('paused')
     this.say('Paused.')
     this.refresh()
   }
@@ -408,15 +448,39 @@ export class Game {
     const act = el.dataset.act
     const arg = el.dataset.arg ?? ''
     this.audio.ui(act === 'close' || act === 'title' ? 'move' : 'ok')
+    const armed = this.armedLaunch
+    this.armedLaunch = null
+    if (act === 'banish' && this.input.touchMode && this.armedBanish !== Number(arg)) {
+      // A banish spends a limited charge: on touch the first tap arms it, the second confirms.
+      this.armedBanish = Number(arg)
+      this.toast('Tap × again to banish this part for the run.', 'close')
+      return
+    }
+    this.armedBanish = null
     switch (act) {
-      case 'launch': return this.launch(arg === 'tutorial')
+      // A first-time player's "Play" is the tutorial: two short rooms, then the real route.
+      case 'launch': {
+        // Starting anything new replaces a saved run: ask once before throwing it away.
+        if (this.screen === 'title' && this.store.get(RUN_KEY) && armed !== arg) {
+          this.armedLaunch = arg
+          this.toast(`This replaces your saved run. ${this.input.touchMode ? 'Tap' : 'Press'} again to start.`)
+          return
+        }
+        return arg === 'daily' ? this.launch(false, true) : this.launch(arg === 'tutorial' || (arg === 'run' && !this.save.seenTutorial))
+      }
+      case 'share': return this.share()
       case 'continue': return this.continueRun()
       case 'retry-seed': {
-        // This one run replays the seed; the next "One more run" is random again (or whatever the title field says).
+        // This one run replays the seed at the heat it was played at; a Daily Forge replays as today's daily.
+        const sum = this.summary
+        if (sum?.daily && sum.daily === dailyKey()) return this.launch(false, true)
         const typed = this.seedText
+        const heat = this.heatPick
         this.seedText = arg
+        if (sum) this.heatPick = Math.min(this.save.heatUnlocked, sum.heat)
         this.launch(false)
         this.seedText = typed
+        this.heatPick = heat
         return
       }
       case 'title': return this.goTitle()
@@ -436,7 +500,10 @@ export class Game {
         return this.refresh()
       case 'tab':
         this.codexTab = arg as View['codexTab']
-        return this.refresh()
+        this.refresh()
+        // A new tab starts at its top; the tabs themselves stay pinned above.
+        this.screenEl.querySelector<HTMLElement>('.panel.scroll')?.scrollTo({ top: 0 })
+        return
       case 'heat':
         this.heatPick = Math.min(this.save.heatUnlocked, Number(arg))
         return this.refresh()
@@ -458,7 +525,10 @@ export class Game {
         // On a touch screen the first tap shows what the room is; the second, or Go, enters.
         if (this.input.touchMode && !el.dataset.go && this.selectedNode !== arg) {
           this.selectedNode = arg
-          return this.refresh()
+          this.refresh()
+          // On a short phone the room's details and Go sit below the map: bring them into view.
+          this.screenEl.querySelector<HTMLElement>('.node-info')?.scrollIntoView({ block: 'nearest' })
+          return
         }
         return this.enter(arg)
       case 'explain': return this.toast(arg)
@@ -474,6 +544,7 @@ export class Game {
       case 'offer': return this.pickOffer(Number(arg))
       case 'salvage': return this.salvage()
       case 'reroll': return this.reroll()
+      case 'banish': return this.banish(Number(arg))
       case 'buy': return this.buy(arg)
       case 'leave-shop': return this.leaveNode()
       case 'event': return this.chooseEvent(arg)
@@ -494,13 +565,17 @@ export class Game {
   private onInput(e: Event): void {
     const t = e.target as HTMLInputElement
     if (t.dataset.seed !== undefined) {
-      this.seedText = t.value.replace(/\D/g, '').slice(0, 10)
+      const digits = t.value.replace(/\D/g, '').slice(0, 10)
+      // Seeds are 32-bit; a larger number would wrap and the share card would show a different seed.
+      this.seedText = digits && Number(digits) > 4294967295 ? '4294967295' : digits
+      if (this.seedText !== t.value) t.value = this.seedText
       return
     }
-    if (t.dataset.set && t.type === 'range') this.onChange(e)
+    // While a slider is dragged, apply the value live; the save is written once, on release (change).
+    if (t.dataset.set && t.type === 'range') this.onChange(e, false)
   }
 
-  private onChange(e: Event): void {
+  private onChange(e: Event, persist = true): void {
     const t = e.target as HTMLInputElement
     if (t.dataset.set) {
       const key = t.dataset.set as 'screenShake' | 'sfx' | 'music' | 'particles'
@@ -513,7 +588,7 @@ export class Game {
       const max = Number(t.max)
       t.style.setProperty('--fill', `${(((value - min) / (max - min)) * 100).toFixed(1)}%`)
       this.applySettings()
-      this.persist()
+      if (persist) this.persist()
     }
     if (t.dataset.flag) {
       const key = t.dataset.flag as 'highContrast' | 'colorblind' | 'cameraMotion' | 'flashes' | 'hitPause' | 'leftHanded' | 'haptics'
@@ -549,11 +624,21 @@ export class Game {
   // -------------------------------------------------------------------------
   // Run flow.
 
-  launch(tutorial: boolean): void {
+  launch(tutorial: boolean, daily = false): void {
     this.lab = false
     this.labPaused = false
-    const seed = this.seedText && !tutorial ? Number(this.seedText) >>> 0 : undefined
-    this.run = createRun(this.heatPick, tutorial, seed)
+    this.outro = null
+    this.hitstop = 0
+    const key = dailyKey()
+    const seed = daily ? dailySeed(key) : this.seedText && !tutorial ? Number(this.seedText) >>> 0 : undefined
+    // The Daily Forge is the same for everyone: heat 0, today's seed.
+    this.run = createRun(daily ? 0 : this.heatPick, tutorial, seed)
+    if (daily) {
+      this.run.daily = key
+      const d = this.save.daily?.key === key ? this.save.daily : { key, best: 0, tries: 0, won: false }
+      d.tries++
+      this.save.daily = d
+    }
     this.summary = null
     this.save.stats.runs++
     this.toasts = []
@@ -595,6 +680,9 @@ export class Game {
     this.lab = true
     this.labPaused = false
     this.labPanel = null
+    // A beat left over from an abandoned room would freeze the lab (the outro only ticks in play).
+    this.outro = null
+    this.hitstop = 0
     this.run = createRun(0, false)
     this.summary = null
     this.sim = new Simulation(ROOM_MAP['grate-crossing']!, currentBuild(this.run), {
@@ -673,6 +761,7 @@ export class Game {
       seed: roomSeed(run),
       assist: this.save.settings.assistDamage,
     }, this.listeners())
+    run.assist = Math.min(run.assist, this.save.settings.assistDamage)
     run.roomIndex++
     // The bath's curse waits for a room it can apply to.
     if (template.type === 'combat' || template.type === 'elite') run.curseNext = false
@@ -687,9 +776,13 @@ export class Game {
     this.iris = 0
     this.hitstop = 0
     this.gateWasOpen = this.sim.exitOpen
+    const affixes = [...new Set(this.sim.enemies.map((e) => e.affix).filter((x): x is Affix => !!x))]
     if (template.type === 'boss') this.hud.banner('Iron Colossus', '', 'boss', artUrl('colossus'))
-    else this.hud.banner(template.name, template.objective, 'room')
+    else this.hud.banner(template.name, affixes.length ? affixes.map((a) => `${AFFIXES[a].label}: ${AFFIXES[a].hint}`).join('  ') : template.objective, 'room')
     this.screen = 'play'
+    this.announceMet()
+    // The portrait "turn the phone" hint plays through once, then stays away for the session.
+    if (!this.rotateTimer && typeof window !== 'undefined') this.rotateTimer = window.setTimeout(() => document.body.classList.add('rotate-seen'), 8000)
     this.say(`${template.name}. ${template.objective}`)
     this.refresh()
   }
@@ -703,11 +796,10 @@ export class Game {
       },
       onShake: (mag) => this.juice.addTrauma(mag / 30),
       onFlash: (s) => {
-        this.flash = Math.max(this.flash, s)
+        this.flashTo(s)
       },
-      onHitstop: (time) => {
-        if (this.save.settings.hitPause) this.hitstop = Math.max(this.hitstop, time)
-      },
+      // One queue for every hit pause (the renderer's too), so close pauses share a cooldown instead of stacking.
+      onHitstop: (time) => this.juice.requestHitstop(time),
       onImpactSfx: (speed, kind) => this.audio.impact(speed, this.sim?.stats.mass ?? 1, this.sim?.build.visual.material ?? 'metal', kind),
       onBounceSfx: (speed) => this.audio.bounce(speed, this.sim?.build.visual.material ?? 'metal'),
       onReflectSfx: () => this.audio.reflect(),
@@ -717,8 +809,9 @@ export class Game {
       },
       onBossPhase: (phase) => {
         this.audio.bossPhase(phase)
+        this.audio.duck(0.7, 0.6)
         this.buzz([60, 40, 90])
-        this.flash = Math.max(this.flash, 0.25)
+        this.flashTo(0.25)
         this.hud.banner(phase === 2 ? 'Heart open' : 'Floor failing', '', 'phase')
         this.say(phase === 2 ? 'Colossus phase two. The heart is open.' : 'Colossus phase three. The middle floor is about to collapse.')
       },
@@ -734,6 +827,7 @@ export class Game {
       },
       onKill: (record) => {
         this.audio.kill(this.sim?.combo ?? 0)
+        this.audio.duck(0.3, 0.06)
         if (!this.run || this.lab) return
         this.run.kills++
         if (record.source === 'collision') this.grant(bumpAchievement(this.save, 'first-blood', 1, 'set'))
@@ -745,6 +839,10 @@ export class Game {
           this.run.slamKills++
           this.grant(bumpAchievement(this.save, 'slam-poetry', 1, 'set'))
         }
+      },
+      onCounter: () => {
+        this.flashTo(0.18)
+        if (this.run && !this.lab) this.grant(bumpAchievement(this.save, 'matador', 1, 'set'))
       },
       onHit: (record) => {
         if (!this.run || this.lab) return
@@ -764,10 +862,12 @@ export class Game {
     const dead = sim.ended === 'dead'
     this.outro = { kind: dead ? 'dead' : 'clear', t: 0, dur: dead ? 1.4 : 0.45, sim }
     this.hitstop = 0
+    // The death is decided now: a reload during the beat must not bring the room back.
+    if (dead && !this.lab) this.clearCheckpoint()
     if (dead) {
       this.audio.shatter()
       this.buzz([90, 50, 160])
-      this.flash = Math.max(this.flash, 0.25)
+      this.flashTo(0.25)
     } else this.audio.clear()
   }
 
@@ -789,8 +889,16 @@ export class Game {
   private onGateOpen(sim: Simulation): void {
     if (sim.room.type !== 'boss') this.juice.slowMo(0.5, 0.35)
     this.audio.clear()
-    this.hud.banner('Gate open', '', 'clear')
-    this.flash = Math.max(this.flash, 0.12)
+    // The grade is decided when the gate opens, so the banner can say it now.
+    if (this.run && !this.run.tutorial && !this.lab) {
+      const f = sim.gradeFacts()
+      const par = parTime(sim.room)
+      const g = gradeRoom(f.time, par, f.taken, sim.maxHp)
+      // The Colossus is graded too (it counts for the score); it pays no cinders, the run is over.
+      const pay = sim.room.type !== 'boss' && GRADE_CINDERS[g] ? ` · +${GRADE_CINDERS[g]} cinders` : ''
+      this.hud.banner(sim.room.type === 'boss' ? `Colossus down · ${g}` : `Gate open · ${g}`, `${f.time.toFixed(1)} s, par ${par}${f.taken > 0.5 ? '' : ' · untouched'}${pay}`, 'clear')
+    } else this.hud.banner('Gate open', '', 'clear')
+    this.flashTo(0.12)
   }
 
   /** Reward cards lean toward the pointer. */
@@ -828,6 +936,7 @@ export class Game {
   private onClear(commit: Extract<RoomCommit, { kind: 'clear' }>, sim: Simulation): void {
     const run = this.run!
     this.grant(bumpAchievement(this.save, 'ignition', 1, 'set'))
+    this.grant(bumpAchievement(this.save, 'perfect-pour', run.grades.filter((g) => g.grade === 'S').length, 'max'))
     if (commit.type === 'elite' && commit.roomDamage <= 0) this.grant(bumpAchievement(this.save, 'unmarked', 1, 'set'))
     if (run.tutorial && run.tutorialStep === 0) {
       this.showOffers('combat')
@@ -835,7 +944,8 @@ export class Game {
     }
     if (run.tutorial && run.tutorialStep === 1) {
       run.tutorial = false
-      run.roomsCleared++
+      // The route starts from zero: practice rooms do not count toward the score, scrap, or "fell in room N".
+      run.roomsCleared = 0
       run.nodes = generateMap(run.rng)
       // The run proper starts whole: practice dents do not follow the ball onto the route.
       run.hp = currentBuild(run).stats.maxHp
@@ -885,12 +995,61 @@ export class Game {
         { icon: 'combo', value: `×${run.bestCombo}`, label: 'Best combo' },
         { icon: 'target', value: `${run.kills}`, label: 'Constructs' },
         { icon: 'map', value: `${run.roomsCleared}`, label: 'Rooms' },
+        { icon: 'check', value: `${run.rams ? Math.round((run.cleanRams / run.rams) * 100) : 0}%`, label: 'Clean rams' },
       ],
       decisions: run.decisions,
-      assist: this.save.settings.assistDamage < 1 || this.save.settings.gameSpeed < 1,
+      assist: run.assist < 1 || this.save.settings.gameSpeed < 1,
       seed: run.seed,
       heat: run.heat,
       line: foremanLine(kind, this.save.stats.deaths, this.save.stats.wins, run.seed),
+      ...this.scoreRun(kind),
+    }
+  }
+
+  /** Score the run, record bests, and write the share line. */
+  private scoreRun(kind: RunSummary['kind']): Pick<RunSummary, 'score' | 'scoreLines' | 'newBest' | 'grades' | 'daily' | 'share'> {
+    const run = this.run!
+    const won = kind === 'victory'
+    const { total, lines } = runScore({
+      roomsCleared: run.roomsCleared, elitesKilled: run.elitesKilled, kills: run.kills, bestCombo: run.bestCombo,
+      // The assist the rooms were actually played at, not whatever the setting says now.
+      grades: run.grades, won, heat: run.heat, assist: Math.min(1, run.assist),
+    })
+    const stats = this.save.stats
+    let newBest = false
+    if (run.daily) {
+      this.grant(bumpAchievement(this.save, 'daily-smith', total, 'max'))
+      const d = this.save.daily?.key === run.daily ? this.save.daily : { key: run.daily, best: 0, tries: 1, won: false }
+      if (total > d.best) {
+        d.best = total
+        newBest = true
+      }
+      d.won = d.won || won
+      this.save.daily = d
+    }
+    if (total > stats.bestScore) {
+      if (stats.bestScore > 0) newBest = true
+      stats.bestScore = total
+    }
+    const s = run.grades.filter((g) => g.grade === 'S').length
+    stats.bestGrades = Math.max(stats.bestGrades, s)
+    const clean = run.rams ? Math.round((run.cleanRams / run.rams) * 100) : 0
+    const head = run.daily ? `Ballborn Daily Forge ${run.daily}` : `Ballborn seed ${run.seed}${run.heat ? ` · Heat ${run.heat}` : ''}`
+    const share = `${head}
+${won ? 'Colossus down' : kind === 'abandon' ? `Left after ${run.roomsCleared} room${run.roomsCleared === 1 ? '' : 's'}` : `Fell in room ${run.roomsCleared + 1}`} · ${total.toLocaleString('en-US')} pts
+Grades ${gradeStrip(run.grades) || '-'} · combo ×${run.bestCombo} · ${clean}% clean rams
+${currentBuild(run).archetype}`
+    return { score: total, scoreLines: lines, newBest, grades: run.grades.map((g) => ({ ...g })), daily: run.daily, share }
+  }
+
+  private share(): void {
+    const text = this.summary?.share
+    if (!text) return
+    const done = () => this.toast('Result copied.', 'check')
+    try {
+      void navigator.clipboard.writeText(text).then(done, () => this.toast('The clipboard is not available here.'))
+    } catch {
+      this.toast('The clipboard is not available here.')
     }
   }
 
@@ -970,7 +1129,40 @@ export class Game {
     const run = this.run
     if (!run || run.rerolls <= 0 || this.screen !== 'reward') return
     run.rerolls--
+    // A fresh hand is dealt in, like entering the screen.
+    delete this.screenEl.dataset.screen
     this.showOffers(run.offerKind)
+  }
+
+  /**
+   * Full-screen flashes are rate limited (photosensitivity guidance: no more
+   * than about three a second). A flash soon after another is mostly absorbed.
+   */
+  private flashTo(strength: number): void {
+    const now = performance.now()
+    const soon = now - this.lastFlashAt < 340
+    const s = soon ? strength * 0.3 : strength
+    if (s > this.flash + 0.02) {
+      this.flash = s
+      if (!soon) this.lastFlashAt = now
+    }
+  }
+  private lastFlashAt = -1e9
+
+  /** Strike one part from the run's pool and redraw that card. */
+  private banish(index: number): void {
+    const run = this.run
+    if (!run || this.screen !== 'reward') return
+    const before = this.offers[index]
+    const next = banishOffer(run, this.save, this.offers, index)
+    if (!next) return
+    this.offers = next
+    for (const o of this.offers) if (o.componentId) this.discoverComponent(o.componentId)
+    this.audio.ui('bad')
+    this.toast(`${before?.title ?? 'Part'} banished for this run. ${run.banishes} left.`, 'close')
+    this.checkpoint({ kind: 'reward', offers: this.offers })
+    this.buildPreviews()
+    this.refresh()
   }
 
   private buy(id: string): void {
@@ -996,7 +1188,15 @@ export class Game {
     const run = this.run
     if (!run || this.screen !== 'event' || !this.event) return
     const event = this.event
-    const result = applyEventChoice(run, this.save, event, choiceId)
+    let result: ReturnType<typeof applyEventChoice>
+    try {
+      result = applyEventChoice(run, this.save, event, choiceId)
+    } catch (err) {
+      if (!(err instanceof TransactionError)) throw err
+      this.audio.ui('bad')
+      this.toast(err.message)
+      return
+    }
     if ('error' in result) {
       this.audio.ui('bad')
       this.toast(result.error)
@@ -1020,6 +1220,8 @@ export class Game {
   private abandon(): void {
     const run = this.run
     this.confirmAbandon = false
+    this.outro = null
+    this.hitstop = 0
     if (!run || this.lab) return this.goTitle()
     const scrap = abandonScrap(run)
     this.save.scrap += scrap
@@ -1086,8 +1288,23 @@ export class Game {
   private meetEnemy(id: string): void {
     if (this.save.discoveredEnemies.includes(id)) return
     this.save.discoveredEnemies.push(id)
-    this.toast(`New construct: ${ENEMY_MAP[id]?.name ?? id}`, 'target')
+    const name = ENEMY_MAP[id]?.name ?? id
+    if (!this.metNames.includes(name)) this.metNames.push(name)
   }
+
+  /** New constructs are named in one note once the room's title banner has cleared, not on top of it. */
+  private announceMet(): void {
+    if (!this.metNames.length) return
+    const names = this.metNames.splice(0)
+    clearTimeout(this.metTimer)
+    const sim = this.sim
+    this.metTimer = window.setTimeout(() => {
+      if (this.sim !== sim) return
+      this.toast(`New construct${names.length > 1 ? 's' : ''}: ${names.join(', ')}`, 'target')
+    }, 2300)
+  }
+  private metNames: string[] = []
+  private metTimer = 0
 
   private onDiscovery(id: string): void {
     const syn = SYNERGY_MAP[id]
@@ -1122,6 +1339,8 @@ export class Game {
   private goTitle(): void {
     this.lab = false
     this.labPaused = false
+    this.outro = null
+    this.hitstop = 0
     this.sim = null
     this.run = null
     this.summary = null
@@ -1150,7 +1369,9 @@ export class Game {
     if (!run || run.tutorial || this.lab) return
     this.persist()
     const data: Checkpoint = { run: serializeRun(run), pending }
-    this.store.set(RUN_KEY, JSON.stringify(data))
+    // A checkpoint that cannot be written must not leave an older one behind: Continue would
+    // replay a reward the permanent save already paid out.
+    if (!this.store.set(RUN_KEY, JSON.stringify(data))) this.clearCheckpoint()
   }
 
   private readCheckpoint(): { run: RunState; pending: Checkpoint['pending'] } | null {
@@ -1297,17 +1518,29 @@ export class Game {
       labPanel: this.labPanel,
       selectedNode: this.selectedNode,
       confirmErase: this.confirmErase,
+      dailyKey: dailyKey(),
     }
     const active = document.activeElement as HTMLElement | null
     const focusKey = active && this.screenEl.contains(active) ? focusKeyOf(active) : null
-    const scrollers = Array.from(this.screenEl.querySelectorAll<HTMLElement>('.scroll, .map-scroll')).map((el) => el.scrollTop)
+    // Every scroller keeps its place across a rebuild, sideways ones too (map, card carousel, part strip).
     const entering = this.screenEl.dataset.screen !== this.screen
+    const scrollers = entering ? [] : Array.from(this.screenEl.querySelectorAll<HTMLElement>(SCROLLERS)).map((el) => [el.scrollLeft, el.scrollTop] as const)
     this.screenEl.dataset.screen = this.screen
     document.body.dataset.screen = this.lab && this.labPaused ? 'lab-edit' : this.screen
     this.screenEl.className = entering ? `${this.screen} enter` : this.screen
     this.screenEl.innerHTML = screenHtml(view)
-    this.screenEl.querySelectorAll<HTMLElement>('.scroll, .map-scroll').forEach((el, i) => {
-      if (scrollers[i] !== undefined) el.scrollTop = scrollers[i]!
+    // The lab drawer slides in when it opens, not again on every part swapped inside it.
+    if (this.screen === 'lab' && !entering && this.labPanel && this.labPanel === this.lastLabPanel) this.screenEl.querySelector('.lab-drawer')?.classList.add('stay')
+    this.lastLabPanel = this.screen === 'lab' ? this.labPanel : null
+    if (this.screen === 'map') this.fitMap()
+    this.screenEl.querySelectorAll<HTMLElement>(SCROLLERS).forEach((el, i) => {
+      const at = scrollers[i]
+      if (!at) return
+      // Restore instantly: a smooth-scrolling container would visibly sweep back from zero.
+      el.style.scrollBehavior = 'auto'
+      el.scrollLeft = at[0]
+      el.scrollTop = at[1]
+      el.style.scrollBehavior = ''
     })
     // A route wider than the screen opens on the rooms you can take next.
     if (entering && this.screen === 'map') {
@@ -1323,20 +1556,165 @@ export class Game {
     const target = (focusKey && this.screenEl.querySelector<HTMLElement>(`${focusKey}:not([disabled])`))
       || this.screenEl.querySelector<HTMLElement>('[data-autofocus]')
       || this.screenEl.querySelector<HTMLElement>('button:not([disabled]), select, input')
+    // On touch nothing is focused until the player reaches for a keyboard or controller:
+    // a focus ring on the first card reads as a pick already made.
+    if (this.input.touchMode && !focusKey) {
+      if (active && active !== document.body && !this.screenEl.contains(active)) active.blur()
+      return
+    }
     target?.focus({ preventScroll: true })
   }
 
-  private resize(): void {
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
+  /**
+   * Switching between touch and mouse or keys changes hints and layout, but a
+   * rebuild inside the very pointerdown would swap out the button before its
+   * click lands. Rebuild just after the gesture instead, and never under a
+   * text field that is being typed into.
+   */
+  private deferTouchRefresh(): void {
+    if (this.touchRefreshQueued) return
+    this.touchRefreshQueued = true
+    const run = () => {
+      window.removeEventListener('pointerup', later, true)
+      window.removeEventListener('keyup', later, true)
+      this.touchRefreshQueued = false
+      if (this.screen === 'play' || isTyping()) return
+      this.refresh()
+    }
+    const later = () => setTimeout(run, 0)
+    window.addEventListener('pointerup', later, true)
+    window.addEventListener('keyup', later, true)
+    // Nothing follows (a programmatic switch): rebuild soon anyway.
+    setTimeout(() => {
+      if (this.touchRefreshQueued) run()
+    }, 400)
+  }
+  private lastLabPanel: View['labPanel'] = null
+  private touchRefreshQueued = false
+  private rotateTimer = 0
+  private armedLaunch: string | null = null
+  private armedBanish: number | null = null
+  private stillDrawn: Simulation | null = null
+  private menuAcc = 0
+  private coinAt: { x: number; y: number } | null = null
+
+  /** Where collected cinders fly: the cinder counter in the HUD, in canvas space. */
+  private coinTarget(w: number, resized: boolean): { x: number; y: number } {
+    if (!this.coinAt || resized || this.coinScale !== this.save.settings.hudScale) {
+      const r = document.getElementById('cinder-chip')?.getBoundingClientRect()
+      // Measured once the HUD is laid out; until then (or if it is hidden) aim near the top right.
+      if (!r || !r.width) return { x: w - 70, y: 24 }
+      const v = this.view.getBoundingClientRect()
+      this.coinAt = { x: r.left + r.width / 2 - v.left, y: r.top + r.height / 2 - v.top }
+      this.coinScale = this.save.settings.hudScale
+    }
+    return this.coinAt
+  }
+  private coinScale = 0
+
+  /**
+   * The Android back gesture (and the browser back button) acts like Esc while
+   * the game is open, instead of leaving the page mid-run. On the title it is
+   * left alone, so back still leaves the game from there.
+   */
+  private trapBack(): void {
+    if (typeof history === 'undefined' || !history.pushState) return
+    try {
+      history.pushState({ ballborn: 1 }, '')
+    } catch {
+      return
+    }
+    window.addEventListener('popstate', () => {
+      if (this.screen === 'title') return
+      if (this.screen === 'play') {
+        if (!this.outro) this.pause()
+      } else if (this.screen === 'lab' && !this.labPaused) this.toggleLabPause()
+      else if (this.screen === 'settings' || this.screen === 'codex' || this.screen === 'pause' || this.buildOpen || this.labPaused) this.back()
+      try {
+        history.pushState({ ballborn: 1 }, '')
+      } catch {
+        // Some embedded browsers refuse; back then leaves as usual.
+      }
+    })
+  }
+
+  /**
+   * Screen space the camera may look past a side wall. In landscape on a touch
+   * screen the stick and the hop button cover the bottom corners, which is
+   * exactly where the ball spawns and the exit gate stands. In portrait the
+   * controls sit below the floor, so no margin is needed.
+   */
+  private cameraEdgePad(w: number, h: number): number {
+    if (!this.input.touchMode || w <= h) return 0
+    return Math.min(w * 0.2, 130 * this.save.settings.touchSize)
+  }
+
+  /**
+   * The whole route, Colossus included, should fit on one screen. Shrink the
+   * map to its panel, but not below a readable size: past that it scrolls.
+   */
+  private fitMap(): void {
+    const scroller = this.screenEl.querySelector<HTMLElement>('.map-scroll')
+    const map = this.screenEl.querySelector<HTMLElement>('.map')
+    if (!scroller || !map) return
+    const natural = parseFloat(map.style.width) || map.offsetWidth
+    const cs = getComputedStyle(scroller)
+    const avail = scroller.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+    const scale = Math.max(0.7, Math.min(1, avail / Math.max(1, natural)))
+    map.style.zoom = scale < 0.999 ? scale.toFixed(3) : ''
+  }
+
+  /** Resolution scale for the canvas, lowered when frames run long (phones, big tablets) and raised again when they recover. */
+  private renderScale = 1
+  private frameAvg = 1 / 60
+  private scaleHold = 0
+
+  /** Size the canvas backing store; true when it changed (and was cleared). */
+  private resize(dt = 0): boolean {
+    if (this.screen === 'map') {
+      const map = this.screenEl.querySelector<HTMLElement>('.map')
+      const w = this.screenEl.clientWidth
+      if (map && map.dataset.fitW !== String(w)) {
+        map.dataset.fitW = String(w)
+        this.fitMap()
+      }
+    }
     const w = this.view.clientWidth
     const h = this.view.clientHeight
-    if (this.view.width !== Math.floor(w * dpr) || this.view.height !== Math.floor(h * dpr)) {
-      this.view.width = Math.floor(w * dpr)
-      this.view.height = Math.floor(h * dpr)
+    // Adaptive resolution: in play, a sustained run of long frames steps the backing store down.
+    const live = this.screen === 'play' || (this.lab && !this.labPaused)
+    if (live && dt > 0 && dt < 0.1) {
+      this.frameAvg += (dt - this.frameAvg) * 0.05
+      this.scaleHold -= dt
+      if (this.scaleHold <= 0) {
+        if (this.frameAvg > 1 / 45 && this.renderScale > 0.6) {
+          this.renderScale = Math.max(0.6, this.renderScale - 0.15)
+          this.scaleHold = 2
+        } else if (this.frameAvg < 1 / 57 && this.renderScale < 1) {
+          this.renderScale = Math.min(1, this.renderScale + 0.05)
+          this.scaleHold = 4
+        }
+      }
     }
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    // A pixel budget: a 2x tablet or a 4K window would otherwise fill 5-8 million pixels a frame.
+    const budget = Math.sqrt(3_000_000 / Math.max(1, w * h))
+    const dpr = Math.max(0.5, Math.min(2, window.devicePixelRatio || 1, budget) * this.renderScale)
+    const bw = Math.max(1, Math.floor(w * dpr))
+    const bh = Math.max(1, Math.floor(h * dpr))
+    let changed = false
+    if (this.view.width !== bw || this.view.height !== bh) {
+      this.view.width = bw
+      this.view.height = bh
+      changed = true
+    }
+    // The transform maps CSS pixels onto the backing store exactly, whatever rounding did.
+    this.ctx.setTransform(bw / Math.max(1, w), 0, 0, bh / Math.max(1, h), 0, 0)
+    return changed
   }
 }
+
+/** Containers whose scroll position survives a screen rebuild. */
+const SCROLLERS = '.scroll, .map-scroll, .cards, .part-row, .lab-slots, .lab-drawer'
 
 function focusKeyOf(el: HTMLElement): string | null {
   const d = el.dataset
@@ -1365,4 +1743,17 @@ function toastHtml(text: string): string {
 function isTyping(): boolean {
   const el = document.activeElement
   return el instanceof HTMLInputElement && el.type === 'text'
+}
+
+/** How hot the room is for the score: constructs alive, clean-ram speed, combo, and the boss phase. */
+function musicIntensity(sim: Simulation): number {
+  if (sim.done) return 0.15
+  const speed = hypot(sim.ball.vx, sim.ball.vy) / Math.max(1, sim.stats.maxSpeed)
+  const armed = speed >= TUNE.cleanRamRatio ? 0.14 : speed * 0.12
+  const combo = Math.min(0.28, sim.combo * 0.035)
+  if (sim.boss && sim.boss.alive) return 0.55 + (sim.boss.phase - 1) * 0.14 + armed * 0.5 + combo * 0.5
+  if (sim.exitOpen) return 0.22
+  const alive = sim.enemies.filter((e) => e.alive).length
+  const base = alive ? 0.42 + Math.min(0.12, alive * 0.025) : 0.3
+  return base + armed + combo
 }
