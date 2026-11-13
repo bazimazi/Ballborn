@@ -7,6 +7,7 @@ import { TUNE } from './tune'
 import type { Stats, VisualDef } from './types'
 import { ballRadius, hopVelocity, horizontalAccel, resolveCircleAabb, verticalAccel, type Body } from './physics'
 import { clamp, hypot, lerp, mulberry32 } from './util'
+import type { Post } from './post'
 
 export interface Camera {
   x: number
@@ -37,6 +38,12 @@ export interface DrawOptions {
   outro: { kind: 'clear' | 'dead'; t: number } | null
   /** Screen point collected cinders fly to (the HUD's cinder counter). */
   coinTarget?: { x: number; y: number }
+  /** Light, bloom and grade passes; null or absent turns them off (high contrast, slow devices). */
+  post?: Post | null
+  /** Bloom strength, 0..1. */
+  bloom?: number
+  /** Impact-frame strength, 0..1 (0 when screen flashes are off). */
+  impact?: number
 }
 
 const INK = '#120d0a'
@@ -80,7 +87,7 @@ export function updateCamera(cam: Camera, sim: Simulation, dt: number, viewW: nu
   cam.x += (lookX - cam.x) * k
   cam.y += (lookY - cam.y) * k
   const sp = hypot(sim.ball.vx, sim.ball.vy)
-  const target = (motion ? clamp(1.02 - sp / 5200, 0.86, 1.05) : 0.96) * fitZoom(viewW, viewH)
+  const target = (motion ? clamp(1.13 - sp / 4600, 0.94, 1.15) : 1.06) * fitZoom(viewW, viewH)
   cam.zoom += (target - cam.zoom) * (1 - Math.exp(-2.4 * dt))
   const halfW = viewW / (2 * cam.zoom)
   const halfH = viewH / (2 * cam.zoom)
@@ -237,15 +244,21 @@ export function drawWorld(ctx: CanvasRenderingContext2D, sim: Simulation, cam: C
 
 function drawWorldAt(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camera, viewW: number, viewH: number, o: DrawOptions): void {
   const juice = o.juice
+  const post = o.contrast ? null : o.post ?? null
+  post?.reset()
   drawBackdrop(ctx, sim, cam, viewW, viewH, o)
 
   const zoom = cam.zoom * (1 + juice.zoomPunch)
-  ctx.save()
-  ctx.translate(viewW / 2 + cam.shakeX, viewH / 2 + cam.shakeY)
-  if (cam.rot) ctx.rotate(cam.rot)
-  ctx.scale(zoom, zoom)
-  ctx.translate(-cam.x, -cam.y)
+  const enter = (): void => {
+    ctx.save()
+    ctx.translate(viewW / 2 + cam.shakeX, viewH / 2 + cam.shakeY)
+    if (cam.rot) ctx.rotate(cam.rot)
+    ctx.scale(zoom, zoom)
+    ctx.translate(-cam.x, -cam.y)
+  }
+  enter()
 
+  if (!o.contrast) drawLamps(ctx, sim, o.time)
   for (const h of sim.hazards) if (h.type === 'lava') drawLavaGlow(ctx, h.x, h.y, h.w, sim.time, o.contrast)
   if (!o.contrast) juice.drawBack(ctx)
   for (const h of sim.hazards) {
@@ -269,6 +282,15 @@ function drawWorldAt(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camera
   }
   for (const h of sim.hazards) if (h.type === 'crusher') drawCrusher(ctx, h, sim.time, o.contrast)
   juice.drawScorches(ctx)
+  ctx.restore()
+
+  // Light the environment; the actors drawn after this stay at full strength on top.
+  if (post) {
+    const light: LightFn = (x, y, r, color, a = 1) => post.add((x - cam.x) * zoom + viewW / 2 + cam.shakeX, (y - cam.y) * zoom + viewH / 2 + cam.shakeY, r * zoom, color, a)
+    gatherLights(sim, o, light)
+    post.applyLights(ctx, viewW, viewH)
+  }
+  enter()
 
   drawGate(ctx, sim, o)
   for (const p of sim.pickups) drawPickup(ctx, p.x, p.y, p.kind, sim.time, p.life, o.contrast)
@@ -291,7 +313,192 @@ function drawWorldAt(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camera
   }
   ctx.restore()
 
-  drawScreenFx(ctx, sim, cam, viewW, viewH, o)
+  if (!o.contrast) drawForeground(ctx, cam, viewW, viewH)
+  if (post) {
+    post.bloom(ctx, ctx.canvas, viewW, viewH, o.bloom ?? 1)
+    post.grade(ctx, viewW, viewH, sim.lowHp ? 1 : 0)
+  }
+  drawScreenFx(ctx, sim, cam, viewW, viewH, o, !!post)
+}
+
+type LightFn = (x: number, y: number, r: number, color: string, a?: number) => void
+
+/** Everything that gives off light this frame, in world space. */
+function gatherLights(sim: Simulation, o: DrawOptions, light: LightFn): void {
+  const t = o.time
+  for (const l of lampsFor(sim)) light(l.x, l.y + 40, 430, '#ffcf9a', 0.42 + 0.03 * Math.sin(t * 7 + l.x))
+  for (const h of sim.hazards) {
+    if (h.type === 'lava') {
+      for (let px = h.x + 40; px < h.x + h.w; px += 130) light(px, h.y + 4, 230, '#ff6a24', 0.85 + 0.12 * Math.sin(t * 2.2 + px * 0.01))
+    } else if (h.type === 'geyser') {
+      const g = geyserPhase(h, sim.time)
+      if (g.erupt) light(h.x + h.w / 2, h.y - 50, 240, '#ff9a4a', 0.9)
+      else if (g.warn) light(h.x + h.w / 2, h.y - 6, 110, '#ff5d3a', 0.6)
+    }
+  }
+  const e = sim.room.exit
+  if (sim.exitOpen) light(e.x + e.w / 2, e.y + e.h / 2, 340, '#ffb15a', 0.95)
+  else light(e.x + e.w / 2, e.y - 6, 110, '#ff5d3a', 0.7)
+  for (const b of sim.bullets) light(b.x, b.y, 110, b.friendly ? '#b8ffe0' : b.color.startsWith('#') ? b.color : '#ffb15a', 0.75)
+  for (const p of sim.pickups) light(p.x, p.y, 70, p.kind === 'heal' ? '#7dffb3' : '#ffb15a', 0.45)
+  for (const en of sim.enemies) {
+    if (!en.alive) continue
+    if (en.windup > 0 || en.charging > 0) light(en.x, en.y, 130, '#ff5d3a', 0.6)
+    if (en.elite) light(en.x, en.y, 170, en.affix ? AFFIXES[en.affix].color : '#ffd15c', 0.45)
+    if (en.shape === 'wisp') light(en.x, en.y, 160, en.accent, 0.6)
+    if (en.burn > 0) light(en.x, en.y, 110, '#ff7a32', 0.6)
+  }
+  const boss = sim.boss
+  if (boss && boss.alive) {
+    light(boss.x, boss.y - 10, boss.phase > 1 ? 420 : 260, '#ff8a3c', boss.phase > 1 ? 0.9 : 0.5)
+    for (const r of boss.rivets) if (r.alive) light(r.x, r.y, 120, '#ffd15c', 0.6)
+  }
+  for (const f of o.juice.flares) light(f.x, f.y, f.r, f.color, f.a * (f.life / f.max))
+  if (!o.juice.shattered && !sim.done) {
+    const b = ballView(sim, o.alpha)
+    const ratio = clamp(hypot(sim.ball.vx, sim.ball.vy) / Math.max(1, sim.stats.maxSpeed), 0, 1.4)
+    light(b.x, b.y, 200 + ratio * 120, sim.build.visual.trail, 0.4 + 0.35 * ratio)
+    light(b.x, b.y, 90, '#fff1df', 0.35)
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Work lamps: hung along each room's ceiling. They give the light pass a rhythm
+// to work with and make long rooms read as places, not corridors.
+
+interface Lamp { x: number; y: number; i: number }
+const lampCache = new WeakMap<Simulation, Lamp[]>()
+
+function lampsFor(sim: Simulation): Lamp[] {
+  let lamps = lampCache.get(sim)
+  if (lamps) return lamps
+  lamps = []
+  const y = 70
+  let i = 0
+  for (let x = 280; x < sim.room.width - 120; x += 560) {
+    // Never inside a platform.
+    const blocked = sim.solids.some((s) => !s.bounds && x > s.x - 50 && x < s.x + s.w + 50 && y + 50 > s.y && y - 90 < s.y + s.h)
+    if (!blocked) lamps.push({ x, y, i: i++ })
+  }
+  lampCache.set(sim, lamps)
+  return lamps
+}
+
+function drawLamps(ctx: CanvasRenderingContext2D, sim: Simulation, time: number): void {
+  for (const l of lampsFor(sim)) {
+    const sway = Math.sin(time * 0.7 + l.i * 1.7) * 0.035
+    ctx.save()
+    ctx.translate(l.x, -48)
+    ctx.rotate(sway)
+    const len = l.y + 48
+    ctx.strokeStyle = '#0b0c10'
+    ctx.lineWidth = 2.5
+    ctx.beginPath()
+    ctx.moveTo(0, 0)
+    ctx.lineTo(0, len - 14)
+    ctx.stroke()
+    // Volumetric cone.
+    ctx.globalCompositeOperation = 'lighter'
+    const cone = ctx.createLinearGradient(0, len, 0, len + 420)
+    cone.addColorStop(0, 'rgba(255, 205, 150, 0.16)')
+    cone.addColorStop(1, 'rgba(255, 205, 150, 0)')
+    ctx.fillStyle = cone
+    ctx.beginPath()
+    ctx.moveTo(-14, len)
+    ctx.lineTo(14, len)
+    ctx.lineTo(150, len + 420)
+    ctx.lineTo(-150, len + 420)
+    ctx.closePath()
+    ctx.fill()
+    ctx.globalAlpha = 0.9
+    ctx.drawImage(glowSprite('#ffd9a8'), -34, len - 26, 68, 68)
+    ctx.globalAlpha = 1
+    ctx.globalCompositeOperation = 'source-over'
+    // Shade.
+    ctx.fillStyle = '#14161c'
+    ctx.beginPath()
+    ctx.moveTo(-6, len - 16)
+    ctx.lineTo(6, len - 16)
+    ctx.lineTo(18, len)
+    ctx.lineTo(-18, len)
+    ctx.closePath()
+    ctx.fill()
+    ctx.fillStyle = '#fff3dc'
+    ctx.beginPath()
+    ctx.ellipse(0, len, 11, 3.5, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Foreground: dark girders and chains between the camera and the room, moving
+// faster than the playfield. Kept to the top edge so they never hide the play.
+
+let fgLayer: HTMLCanvasElement | null = null
+const FG_W = 2200
+
+function buildForeground(): HTMLCanvasElement {
+  const c = document.createElement('canvas')
+  c.width = FG_W
+  c.height = 200
+  const g = c.getContext('2d')!
+  const rnd = mulberry32(31)
+  g.fillStyle = '#050608'
+  // A heavy truss across the very top, broken in places.
+  for (let x = 0; x < FG_W; x += 700 + rnd() * 300) {
+    const w = 260 + rnd() * 380
+    g.fillRect(x, 0, w, 16)
+    g.fillRect(x, 30, w, 6)
+    g.lineWidth = 4
+    g.strokeStyle = '#050608'
+    g.beginPath()
+    for (let px = x; px < x + w - 20; px += 30) {
+      g.moveTo(px, 16)
+      g.lineTo(px + 15, 32)
+      g.lineTo(px + 30, 16)
+    }
+    g.stroke()
+  }
+  // Chains hanging into view.
+  for (let i = 0; i < 7; i++) {
+    const x = rnd() * FG_W
+    const len = 50 + rnd() * 130
+    g.lineWidth = 5
+    for (let y = 0; y < len; y += 16) {
+      g.beginPath()
+      if ((y / 16) % 2) g.ellipse(x, y, 3, 9, 0, 0, Math.PI * 2)
+      else g.ellipse(x, y, 7, 9, 0, 0, Math.PI * 2)
+      g.stroke()
+    }
+    if (rnd() < 0.5) {
+      g.beginPath()
+      g.moveTo(x - 14, len)
+      g.lineTo(x + 14, len)
+      g.lineTo(x + 8, len + 22)
+      g.lineTo(x - 8, len + 22)
+      g.fill()
+    }
+  }
+  const soft = document.createElement('canvas')
+  soft.width = c.width
+  soft.height = c.height
+  const sg = soft.getContext('2d')!
+  sg.filter = 'blur(2px)'
+  sg.drawImage(c, 0, 0)
+  return soft
+}
+
+function drawForeground(ctx: CanvasRenderingContext2D, cam: Camera, w: number, h: number): void {
+  if (!fgLayer) fgLayer = buildForeground()
+  let off = -((cam.x * 1.35) % FG_W)
+  if (off > 0) off -= FG_W
+  const y = clamp(-(cam.y - 380) * 0.25, -120, 10) - 6
+  ctx.save()
+  ctx.globalAlpha = 0.92
+  const k = clamp(Math.min(w, h) / 720, 0.6, 1.2)
+  for (let x = off * k; x < w; x += FG_W * k) ctx.drawImage(fgLayer, x, y * k, FG_W * k, 200 * k)
+  ctx.restore()
 }
 
 function worldText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, size: number, color: string): void {
@@ -388,8 +595,8 @@ function buildMidLayer(h: number): HTMLCanvasElement {
 
 function drawBackdrop(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camera, w: number, h: number, o: DrawOptions): void {
   const bg = ctx.createLinearGradient(0, 0, 0, h)
-  bg.addColorStop(0, o.contrast ? '#000' : BIOME.skyTop)
-  bg.addColorStop(1, o.contrast ? '#0a0806' : '#2e1a10')
+  bg.addColorStop(0, o.contrast ? '#000' : '#0c1018')
+  bg.addColorStop(1, o.contrast ? '#0a0806' : '#2a1a12')
   ctx.fillStyle = bg
   ctx.fillRect(0, 0, w, h)
   if (o.contrast) return
@@ -398,7 +605,7 @@ function drawBackdrop(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camer
     const panX = clamp((cam.x / Math.max(1, sim.room.width)) * 2 - 1, -1, 1) * 0.8
     const panY = clamp((cam.y / Math.max(1, sim.room.height)) * 2 - 1, -1, 1) * 0.5
     const r = coverRect(img, w, h, 1.14, panX, panY)
-    ctx.globalAlpha = 0.62
+    ctx.globalAlpha = 0.82
     ctx.drawImage(img, r.x, r.y, r.w, r.h)
     ctx.globalAlpha = 1
   }
@@ -433,9 +640,10 @@ function drawBackdrop(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camer
   ctx.restore()
   // Heat from below and smoke above keep the playfield readable.
   const haze = ctx.createLinearGradient(0, 0, 0, h)
-  haze.addColorStop(0, 'rgba(10, 8, 6, 0.5)')
-  haze.addColorStop(0.45, 'rgba(10, 8, 6, 0.15)')
-  haze.addColorStop(1, 'rgba(90, 30, 8, 0.28)')
+  haze.addColorStop(0, 'rgba(8, 12, 20, 0.45)')
+  haze.addColorStop(0.45, 'rgba(30, 40, 58, 0.12)')
+  haze.addColorStop(0.8, 'rgba(70, 60, 60, 0.12)')
+  haze.addColorStop(1, 'rgba(120, 40, 10, 0.3)')
   ctx.fillStyle = haze
   ctx.fillRect(0, 0, w, h)
 }
@@ -646,48 +854,114 @@ function drawBoundWall(ctx: CanvasRenderingContext2D, x: number, w: number, left
   ctx.globalAlpha = 1
 }
 
+let grime: CanvasPattern | null | undefined
+
+/** A neutral-grey speckle and scratch texture; drawn with 'overlay' it gives plates wear without changing their colour. */
+function grimePattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+  if (grime !== undefined) return grime
+  const c = document.createElement('canvas')
+  c.width = c.height = 256
+  const g = c.getContext('2d')
+  if (!g) return (grime = null)
+  const rnd = mulberry32(11)
+  g.fillStyle = 'rgb(128,128,128)'
+  g.fillRect(0, 0, 256, 256)
+  for (let i = 0; i < 2200; i++) {
+    const v = (96 + rnd() * 70) | 0
+    g.fillStyle = `rgb(${v},${v},${v})`
+    g.fillRect(rnd() * 256, rnd() * 256, 1 + rnd() * 2, 1 + rnd() * 2)
+  }
+  g.lineWidth = 1
+  for (let i = 0; i < 46; i++) {
+    const x = rnd() * 256
+    const y = rnd() * 256
+    const l = 6 + rnd() * 34
+    const a = rnd() * 0.7 - 0.35
+    g.strokeStyle = rnd() < 0.5 ? 'rgba(210,210,210,0.55)' : 'rgba(60,60,60,0.5)'
+    g.beginPath()
+    g.moveTo(x, y)
+    g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l)
+    g.stroke()
+  }
+  for (let i = 0; i < 14; i++) {
+    const x = rnd() * 256
+    const y = rnd() * 256
+    const r = 10 + rnd() * 34
+    const gr = g.createRadialGradient(x, y, 0, x, y, r)
+    gr.addColorStop(0, 'rgba(50,50,50,0.4)')
+    gr.addColorStop(1, 'rgba(50,50,50,0)')
+    g.fillStyle = gr
+    g.fillRect(x - r, y - r, r * 2, r * 2)
+  }
+  grime = ctx.createPattern(c, 'repeat')
+  return grime
+}
+
 function drawBeam(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, kind: string, time: number, contrast: boolean, hot: boolean): void {
   const floor = h >= 80
   const face = Math.min(h, floor ? 240 : h)
-  const base = kind === 'spring' ? '#6a5344' : kind === 'conveyor' ? '#46504c' : kind === 'ice' ? '#5e7c82' : floor ? '#3a322b' : '#4a4038'
+  const base = kind === 'spring' ? '#7a5640' : kind === 'conveyor' ? '#3f4d4c' : kind === 'ice' ? '#5f8396' : floor ? '#3a404c' : '#4c5462'
   // Soft drop shadow under floating platforms.
   if (!floor && !contrast) {
-    const sh = ctx.createLinearGradient(0, y + h, 0, y + h + 22)
-    sh.addColorStop(0, 'rgba(0,0,0,0.35)')
+    const sh = ctx.createLinearGradient(0, y + h, 0, y + h + 28)
+    sh.addColorStop(0, 'rgba(0,0,0,0.45)')
     sh.addColorStop(1, 'rgba(0,0,0,0)')
     ctx.fillStyle = sh
-    ctx.fillRect(x + 4, y + h, w - 8, 22)
+    ctx.fillRect(x + 4, y + h, w - 8, 28)
   }
   const g = ctx.createLinearGradient(0, y, 0, y + face)
-  g.addColorStop(0, shade(base, 0.12))
-  g.addColorStop(0.35, base)
-  g.addColorStop(1, shade(base, -0.55))
+  g.addColorStop(0, shade(base, 0.22))
+  g.addColorStop(0.18, base)
+  g.addColorStop(1, shade(base, -0.62))
   ctx.fillStyle = g
   ctx.fillRect(x, y, w, h)
-  if (hot && !contrast) {
-    const hg = ctx.createLinearGradient(0, y + h - Math.min(h, 40), 0, y + h)
-    hg.addColorStop(0, 'rgba(255, 90, 30, 0)')
-    hg.addColorStop(1, 'rgba(255, 110, 40, 0.35)')
-    ctx.fillStyle = hg
-    ctx.fillRect(x, y + h - Math.min(h, 40), w, Math.min(h, 40))
+  if (!contrast) {
+    const pat = grimePattern(ctx)
+    if (pat) {
+      ctx.save()
+      ctx.globalCompositeOperation = 'overlay'
+      ctx.globalAlpha = 0.7
+      ctx.fillStyle = pat
+      ctx.fillRect(x, y, w, face)
+      ctx.restore()
+    }
   }
-  // Plate seams.
-  const seam = floor ? 96 : 64
-  ctx.fillStyle = 'rgba(0,0,0,0.35)'
-  for (let px = x + seam; px < x + w - 8; px += seam) ctx.fillRect(px, y + 3, 2, face - 3)
-  ctx.fillStyle = 'rgba(255,240,220,0.06)'
-  for (let px = x + seam + 2; px < x + w - 8; px += seam) ctx.fillRect(px, y + 3, 1, face - 3)
+  if (hot && !contrast) {
+    const hg = ctx.createLinearGradient(0, y + h - Math.min(h, 60), 0, y + h)
+    hg.addColorStop(0, 'rgba(255, 90, 30, 0)')
+    hg.addColorStop(1, 'rgba(255, 110, 40, 0.42)')
+    ctx.fillStyle = hg
+    ctx.fillRect(x, y + h - Math.min(h, 60), w, Math.min(h, 60))
+  }
+  // Plate seams with a lit edge.
+  const seam = floor ? 128 : 72
+  ctx.fillStyle = 'rgba(0,0,0,0.42)'
+  for (let px = x + seam; px < x + w - 8; px += seam) ctx.fillRect(px, y + 4, 2, face - 4)
+  ctx.fillStyle = 'rgba(220,235,255,0.08)'
+  for (let px = x + seam + 2; px < x + w - 8; px += seam) ctx.fillRect(px, y + 4, 1, face - 4)
+  if (floor) {
+    // A horizontal band and bolted strip a little under the walkway: the floor reads as built.
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'
+    ctx.fillRect(x, y + 34, w, 3)
+    ctx.fillStyle = 'rgba(220,235,255,0.06)'
+    ctx.fillRect(x, y + 37, w, 1)
+  }
   // Lit top lip (the walkable edge), and a dark underside.
-  const lip = kind === 'spring' ? '#ffb15a' : kind === 'ice' ? '#d5f4f6' : BONE
+  const lip = kind === 'spring' ? '#ffb15a' : kind === 'ice' ? '#d5f4f6' : '#f6e2c8'
+  ctx.fillStyle = shade(base, -0.5)
+  ctx.fillRect(x, y, w, floor ? 7 : 5)
   ctx.fillStyle = lip
-  ctx.fillRect(x, y, w, floor ? 5 : 3)
-  ctx.fillStyle = 'rgba(255,255,255,0.35)'
+  ctx.fillRect(x, y, w, floor ? 4 : 3)
+  ctx.fillStyle = 'rgba(255,255,255,0.6)'
   ctx.fillRect(x, y, w, 1)
-  ctx.fillStyle = 'rgba(0,0,0,0.45)'
-  ctx.fillRect(x, y + (floor ? 5 : 3), w, 2)
   if (!floor) {
-    ctx.fillStyle = 'rgba(0,0,0,0.5)'
-    ctx.fillRect(x, y + h - 2, w, 2)
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'
+    ctx.fillRect(x, y + h - 3, w, 3)
+    // Bevelled ends.
+    ctx.fillStyle = 'rgba(255,240,220,0.12)'
+    ctx.fillRect(x, y + 3, 2, h - 6)
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'
+    ctx.fillRect(x + w - 2, y + 3, 2, h - 6)
   }
   if (contrast) {
     ctx.strokeStyle = '#ffffff'
@@ -696,15 +970,47 @@ function drawBeam(ctx: CanvasRenderingContext2D, x: number, y: number, w: number
   }
   // Rivets with a highlight.
   const rivets = Math.max(2, Math.floor(w / 48))
-  const ry = y + Math.min(h, 40) * 0.55
+  const ry = y + (floor ? 20 : Math.min(h, 40) * 0.58)
   for (let i = 0; i < rivets; i++) {
     const rx = x + 12 + ((w - 24) * i) / Math.max(1, rivets - 1)
-    ctx.fillStyle = '#1e1915'
+    ctx.fillStyle = '#15171c'
     ctx.beginPath()
-    ctx.arc(rx, ry, 2.8, 0, Math.PI * 2)
+    ctx.arc(rx, ry, 3, 0, Math.PI * 2)
     ctx.fill()
-    ctx.fillStyle = 'rgba(255,235,210,0.35)'
-    ctx.fillRect(rx - 1.4, ry - 1.6, 1.4, 1.2)
+    ctx.fillStyle = 'rgba(230,240,255,0.4)'
+    ctx.fillRect(rx - 1.5, ry - 1.8, 1.5, 1.3)
+  }
+  // Floating metal platforms: hazard chevrons on the ends and amber running lights underneath.
+  if (!floor && kind === 'metal' && !contrast && w >= 80 && h >= 16) {
+    for (const ex of [x + 3, x + w - 15]) {
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(ex, y + 6, 12, h - 10)
+      ctx.clip()
+      ctx.fillStyle = '#16181d'
+      ctx.fillRect(ex, y + 6, 12, h - 10)
+      ctx.fillStyle = '#e6b44a'
+      for (let k = -2; k < h / 6; k++) {
+        ctx.beginPath()
+        ctx.moveTo(ex, y + 6 + k * 8)
+        ctx.lineTo(ex + 12, y + 6 + k * 8 - 8)
+        ctx.lineTo(ex + 12, y + 6 + k * 8 - 4)
+        ctx.lineTo(ex, y + 6 + k * 8 + 4)
+        ctx.fill()
+      }
+      ctx.restore()
+    }
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    for (let px = x + 40; px < x + w - 30; px += 80) {
+      const on = 0.55 + 0.45 * Math.sin(time * 2.2 + px * 0.05)
+      ctx.globalAlpha = on
+      ctx.fillStyle = '#ffb35a'
+      ctx.fillRect(px - 3, y + h - 3, 6, 2)
+      ctx.globalAlpha = on * 0.6
+      ctx.drawImage(glowSprite('#ff9a3c'), px - 12, y + h - 14, 24, 24)
+    }
+    ctx.restore()
   }
   if (kind === 'ice' && !contrast) {
     ctx.strokeStyle = 'rgba(230, 250, 255, 0.35)'
@@ -729,7 +1035,6 @@ function drawBeam(ctx: CanvasRenderingContext2D, x: number, y: number, w: number
     }
     ctx.stroke()
     ctx.globalAlpha = 1
-    // End rollers.
     for (const rx of [x + 6, x + w - 6]) {
       ctx.save()
       ctx.translate(rx, y + Math.min(h, 20) / 2 + 2)
@@ -790,6 +1095,24 @@ function drawGate(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
       const flare = o.outro?.kind === 'clear' ? 1 + o.outro.t * 2 : 1
       ctx.globalAlpha = Math.min(1, (0.55 + 0.15 * Math.sin(t * 3)) * flare)
       ctx.drawImage(glowSprite('#ffb15a'), cx - e.w * 1.3 * flare, e.y + e.h / 2 - e.h * 0.9 * flare, e.w * 2.6 * flare, e.h * 1.8 * flare)
+      ctx.restore()
+    }
+    if (!o.contrast) {
+      // Slow light rays turning behind the open gate.
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.translate(cx, e.y + e.h / 2)
+      ctx.rotate(t * 0.35)
+      ctx.fillStyle = 'rgba(255, 200, 130, 0.07)'
+      for (let k = 0; k < 8; k++) {
+        ctx.rotate(Math.PI / 4)
+        ctx.beginPath()
+        ctx.moveTo(0, 0)
+        ctx.lineTo(-22, -e.h * 1.6)
+        ctx.lineTo(22, -e.h * 1.6)
+        ctx.closePath()
+        ctx.fill()
+      }
       ctx.restore()
     }
     const inner = ctx.createLinearGradient(0, e.y, 0, e.y + e.h)
@@ -976,27 +1299,44 @@ function drawSimParticles(ctx: CanvasRenderingContext2D, sim: Simulation, o: Dra
 
 function drawFloaters(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions): void {
   ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
   ctx.lineJoin = 'round'
   for (const f of sim.floaters) {
     const age = 0.7 - f.life
     const n = parseFloat(f.text)
-    const big = Number.isFinite(n) ? clamp(n / 8, 0, 16) : 2
-    const size = 15 + big
-    // Pop in large, settle, then fade and drift.
-    const pop = o.motion ? (age < 0.09 ? lerp(1.7, 1, age / 0.09) : 1) : 1
-    ctx.globalAlpha = clamp(f.life * 2.4, 0, 1)
+    const numeric = Number.isFinite(n)
+    const big = numeric ? clamp(n / 7, 0, 20) : 1
+    const crit = f.text.includes('!')
+    const size = (numeric ? 17 : 13) + big + (crit ? 6 : 0)
+    // Slam in large, overshoot, settle, then rise and fade. A little sideways scatter per number.
+    const pop = o.motion ? (age < 0.06 ? lerp(2.1, 0.9, age / 0.06) : age < 0.14 ? lerp(0.9, 1, (age - 0.06) / 0.08) : 1) : 1
+    let hash = 0
+    for (let i = 0; i < f.text.length; i++) hash = (hash * 31 + f.text.charCodeAt(i)) % 997
+    const drift = o.motion ? ((((f.x * 7.31 + hash * 0.37) % 1) + 1) % 1 - 0.5) * 70 * age : 0
+    // An eased extra rise: numbers spawned a beat apart pull away from each other.
+    const rise = o.motion ? Math.sqrt(Math.max(0, age)) * 46 : 0
+    ctx.globalAlpha = clamp(f.life * 2.6, 0, 1)
     ctx.save()
-    ctx.translate(f.x, f.y)
+    ctx.translate(f.x + drift, f.y - rise)
     ctx.scale(pop, pop)
-    ctx.font = `800 ${size}px Outfit, Segoe UI, sans-serif`
-    ctx.lineWidth = 5
+    if (crit) ctx.rotate(-0.08)
+    ctx.font = `800 ${size}px Syne, Outfit, Segoe UI, sans-serif`
+    // Drop shadow, heavy ink outline, then the fill with a light top.
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'
+    ctx.fillText(f.text, 2, 3)
+    ctx.lineWidth = Math.max(4, size * 0.28)
     ctx.strokeStyle = INK
     ctx.strokeText(f.text, 0, 0)
-    ctx.fillStyle = f.color
+    const g = ctx.createLinearGradient(0, -size * 0.5, 0, size * 0.5)
+    g.addColorStop(0, '#ffffff')
+    g.addColorStop(0.55, f.color)
+    g.addColorStop(1, shade(f.color.startsWith('#') ? f.color : '#ffb15a', -0.25))
+    ctx.fillStyle = g
     ctx.fillText(f.text, 0, 0)
     ctx.restore()
   }
   ctx.globalAlpha = 1
+  ctx.textBaseline = 'alphabetic'
 }
 
 // -----------------------------------------------------------------------------
@@ -1105,13 +1445,31 @@ function drawEnemy(ctx: CanvasRenderingContext2D, e: LiveEnemy, sim: Simulation,
     ctx.drawImage(glowSprite(e.accent), -r * 2.2, -r * 2.2, r * 4.4, r * 4.4)
     ctx.restore()
   }
+  if (!o.contrast) {
+    // A dark halo separates the silhouette from a busy backdrop.
+    ctx.globalAlpha = 0.55
+    ctx.drawImage(glowSprite('#05060a'), -r * 1.9, -r * 1.9, r * 3.8, r * 3.8)
+    ctx.globalAlpha = 1
+  }
   enemyPath(ctx, e.shape, r, time)
   const body = ctx.createLinearGradient(0, -r, 0, r)
-  body.addColorStop(0, shade(e.color, 0.28))
+  body.addColorStop(0, shade(e.color, 0.34))
   body.addColorStop(0.5, e.color)
-  body.addColorStop(1, shade(e.color, -0.45))
+  body.addColorStop(1, shade(e.color, -0.5))
   ctx.fillStyle = body
   ctx.fill()
+  if (!o.contrast) {
+    // Warm bounce light from the slag below.
+    ctx.save()
+    ctx.clip()
+    const rim = ctx.createLinearGradient(0, r * 0.25, 0, r)
+    rim.addColorStop(0, 'rgba(255, 130, 60, 0)')
+    rim.addColorStop(1, 'rgba(255, 140, 70, 0.45)')
+    ctx.fillStyle = rim
+    ctx.fillRect(-r * 1.6, r * 0.25, r * 3.2, r)
+    ctx.restore()
+    enemyPath(ctx, e.shape, r, time)
+  }
   ctx.lineJoin = 'round'
   ctx.strokeStyle = o.contrast ? '#ffffff' : INK
   ctx.lineWidth = o.contrast ? 3 : 3.5
@@ -1650,28 +2008,24 @@ function drawBall(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   groundShadow(ctx, juice, view.x, view.y + b.r, b.r * scale)
   ctx.save()
   // Tapered trail, hotter once the ball is fast enough to ram cleanly.
-  if (sim.trail.length > 1 && sp > 80) {
+  if (sim.trail.length > 2 && sp > 80) {
     // The newest trail point is the end of the latest tick; the drawn ball is between ticks.
     const pts = [...sim.trail.slice(0, -1), view]
-    ctx.lineCap = 'round'
-    if (armed && !o.contrast) ctx.globalCompositeOperation = 'lighter'
-    for (let i = 1; i < pts.length; i++) {
-      const f = i / pts.length
-      ctx.globalAlpha = (armed ? 0.5 : 0.3) * f * scale
-      ctx.strokeStyle = v.trail
-      ctx.lineWidth = b.r * (armed ? 1.5 : 1) * f
-      ctx.beginPath()
-      ctx.moveTo(pts[i - 1]!.x, pts[i - 1]!.y)
-      ctx.lineTo(pts[i]!.x, pts[i]!.y)
-      ctx.stroke()
+    const width = b.r * (armed ? 1.05 : 0.8)
+    if (!o.contrast) ctx.globalCompositeOperation = 'lighter'
+    ctx.globalAlpha = (armed ? 0.55 : 0.32) * scale * clamp((sp - 80) / 300, 0, 1)
+    ribbon(ctx, pts, width, v.trail)
+    if (armed) {
+      ctx.globalAlpha = 0.5 * scale
+      ribbon(ctx, pts, width * 0.38, '#fff6ea')
     }
     ctx.globalCompositeOperation = 'source-over'
     ctx.globalAlpha = 1
   }
   if (armed && !o.contrast) {
     ctx.globalCompositeOperation = 'lighter'
-    ctx.globalAlpha = (0.32 + 0.1 * Math.sin(o.time * 14)) * scale
-    ctx.drawImage(glowSprite(v.trail), view.x - b.r * 2.6, view.y - b.r * 2.6, b.r * 5.2, b.r * 5.2)
+    ctx.globalAlpha = (0.2 + 0.06 * Math.sin(o.time * 14)) * scale
+    ctx.drawImage(glowSprite(v.trail), view.x - b.r * 2.4, view.y - b.r * 2.4, b.r * 4.8, b.r * 4.8)
     ctx.globalCompositeOperation = 'source-over'
     ctx.globalAlpha = 1
   }
@@ -1745,12 +2099,20 @@ function drawBall(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   ctx.fill()
   drawPattern(ctx, v, r, o.colorblind)
   ctx.restore()
-  if (armed && !o.contrast) {
-    ctx.globalCompositeOperation = 'lighter'
-    ctx.globalAlpha = 0.35
-    ctx.drawImage(glowSprite(v.trail), -r, -r, r * 2, r * 2)
-    ctx.globalCompositeOperation = 'source-over'
-    ctx.globalAlpha = sim.hurtLock > 0 && Math.floor(o.time * 20) % 2 === 0 ? 0.45 : 1
+  if (!o.contrast) {
+    // Warm bounce light on the underside, cool sky light on top: the ball sits in the room's light.
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(0, 0, r, 0, Math.PI * 2)
+    ctx.clip()
+    const rim = ctx.createLinearGradient(0, -r, 0, r)
+    rim.addColorStop(0, 'rgba(150, 200, 255, 0.18)')
+    rim.addColorStop(0.45, 'rgba(0,0,0,0)')
+    rim.addColorStop(0.78, 'rgba(0,0,0,0)')
+    rim.addColorStop(1, 'rgba(255, 140, 70, 0.45)')
+    ctx.fillStyle = rim
+    ctx.fillRect(-r, -r, r * 2, r * 2)
+    ctx.restore()
   }
   // Shell ring, rim light, and a fixed specular glint.
   ctx.strokeStyle = INK
@@ -1800,6 +2162,26 @@ function drawBall(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   }
   ctx.restore()
   if (leaving > 0) return
+  if (armed && !o.contrast) {
+    // Armed: two arcs of charge circling the ball.
+    ctx.save()
+    ctx.translate(view.x, view.y)
+    ctx.rotate(o.time * 9)
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.lineCap = 'round'
+    for (let k = 0; k < 2; k++) {
+      ctx.rotate(Math.PI)
+      ctx.strokeStyle = 'rgba(141, 255, 210, 0.85)'
+      ctx.lineWidth = 2.5
+      ctx.beginPath()
+      ctx.arc(0, 0, b.r + 4, 0, 1.1)
+      ctx.stroke()
+      ctx.strokeStyle = 'rgba(141, 255, 210, 0.3)'
+      ctx.lineWidth = 6
+      ctx.stroke()
+    }
+    ctx.restore()
+  }
   // Speed ring: a clean ram needs the arc past the notch.
   const ringR = b.r + 9
   ctx.lineCap = 'round'
@@ -1822,6 +2204,34 @@ function drawBall(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   ctx.moveTo(view.x + Math.cos(notch) * (ringR - 5), view.y + Math.sin(notch) * (ringR - 5))
   ctx.lineTo(view.x + Math.cos(notch) * (ringR + 5), view.y + Math.sin(notch) * (ringR + 5))
   ctx.stroke()
+}
+
+/** A smooth tapered ribbon through points, widest at the newest end. */
+function ribbon(ctx: CanvasRenderingContext2D, pts: { x: number; y: number }[], width: number, color: string): void {
+  const n = pts.length
+  if (n < 2) return
+  const left: [number, number][] = []
+  const right: [number, number][] = []
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)]!
+    const c = pts[Math.min(n - 1, i + 1)]!
+    let dx = c.x - a.x
+    let dy = c.y - a.y
+    const len = Math.hypot(dx, dy) || 1
+    dx /= len
+    dy /= len
+    const f = i / (n - 1)
+    const hw = width * f * f
+    left.push([pts[i]!.x - dy * hw, pts[i]!.y + dx * hw])
+    right.push([pts[i]!.x + dy * hw, pts[i]!.y - dx * hw])
+  }
+  ctx.fillStyle = color
+  ctx.beginPath()
+  ctx.moveTo(left[0]![0], left[0]![1])
+  for (let i = 1; i < n; i++) ctx.lineTo(left[i]![0], left[i]![1])
+  for (let i = n - 1; i >= 0; i--) ctx.lineTo(right[i]![0], right[i]![1])
+  ctx.closePath()
+  ctx.fill()
 }
 
 function drawSpikeRing(ctx: CanvasRenderingContext2D, v: VisualDef, r: number, spin: number): void {
@@ -1892,35 +2302,40 @@ function drawPattern(ctx: CanvasRenderingContext2D, v: VisualDef, r: number, col
 // -----------------------------------------------------------------------------
 // Screen-space layers: vignette, danger, speed lines, flashes, cinders, iris.
 
-function drawScreenFx(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camera, w: number, h: number, o: DrawOptions): void {
+function drawScreenFx(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camera, w: number, h: number, o: DrawOptions, graded = false): void {
   const juice = o.juice
-  const v = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75)
-  v.addColorStop(0, 'rgba(0,0,0,0)')
-  v.addColorStop(1, 'rgba(0,0,0,0.5)')
-  ctx.fillStyle = v
-  ctx.fillRect(0, 0, w, h)
+  if (!graded) {
+    const v = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75)
+    v.addColorStop(0, 'rgba(0,0,0,0)')
+    v.addColorStop(1, 'rgba(0,0,0,0.5)')
+    ctx.fillStyle = v
+    ctx.fillRect(0, 0, w, h)
+  }
   drawOffscreen(ctx, sim, cam, w, h, o)
   // Speed lines when the ball is near its top speed.
   const sp = hypot(sim.ball.vx, sim.ball.vy)
   const ratio = sp / Math.max(1, sim.stats.maxSpeed)
-  if (o.motion && ratio > 0.8 && !o.contrast && !sim.done) {
-    const a = clamp((ratio - 0.8) * 2.5, 0, 0.5)
-    const dir = Math.sign(sim.ball.vx) || 1
+  if (o.motion && ratio > 0.82 && !o.contrast && !sim.done) {
+    // Radial speed lines converging on the ball, re-drawn a few times a second like hand-drawn frames.
+    const a = clamp((ratio - 0.82) * 2.4, 0, 0.4)
+    const bv = ballView(sim, o.alpha)
+    const c = worldToScreen(cam, bv.x, bv.y, w, h)
+    const outer = Math.hypot(w, h) * 0.62
+    const rnd = mulberry32(Math.floor(o.time * 18))
     ctx.save()
     ctx.globalCompositeOperation = 'lighter'
-    ctx.strokeStyle = `rgba(255, 240, 220, ${a * 0.5})`
-    ctx.lineWidth = 1.5
+    ctx.fillStyle = `rgba(255, 244, 228, ${a * 0.32})`
     ctx.beginPath()
-    for (let i = 0; i < 14; i++) {
-      const band = i % 2 ? 0.08 + ((i * 0.137) % 0.18) : 0.74 + ((i * 0.211) % 0.2)
-      const y = h * band
-      const speed = 1400 + (i * 97) % 600
-      const len = 60 + (i * 53) % 120
-      const x = ((-dir * o.time * speed + i * 211) % (w + len) + w + len) % (w + len) - len
-      ctx.moveTo(x, y)
-      ctx.lineTo(x + len * dir, y)
+    for (let i = 0; i < 34; i++) {
+      const ang = (i / 34) * Math.PI * 2 + rnd() * 0.15
+      const inner = outer * (0.66 + rnd() * 0.18)
+      const half = 0.004 + rnd() * 0.01
+      ctx.moveTo(c.x + Math.cos(ang) * inner, c.y + Math.sin(ang) * inner)
+      ctx.lineTo(c.x + Math.cos(ang - half) * outer, c.y + Math.sin(ang - half) * outer)
+      ctx.lineTo(c.x + Math.cos(ang + half) * outer, c.y + Math.sin(ang + half) * outer)
+      ctx.closePath()
     }
-    ctx.stroke()
+    ctx.fill()
     ctx.restore()
   }
   if (sim.lowHp && !sim.done) {
@@ -1943,6 +2358,25 @@ function drawScreenFx(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camer
   if (o.flash > 0) {
     ctx.fillStyle = `rgba(255, 240, 220, ${clamp(o.flash, 0, 0.28)})`
     ctx.fillRect(0, 0, w, h)
+  }
+  const impact = o.impact ?? 0
+  if (impact > 0 && !o.contrast) {
+    // Impact frame: one beat of inverted, crushed contrast, then a warm afterglow.
+    ctx.save()
+    if (impact > 0.55) {
+      ctx.globalCompositeOperation = 'difference'
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, w, h)
+      ctx.globalCompositeOperation = 'saturation'
+      ctx.fillStyle = '#000000'
+      ctx.globalAlpha = 0.8
+      ctx.fillRect(0, 0, w, h)
+    } else {
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.fillStyle = `rgba(255, 210, 160, ${impact * 0.35})`
+      ctx.fillRect(0, 0, w, h)
+    }
+    ctx.restore()
   }
   if (o.outro?.kind === 'dead') {
     const t = o.outro.t

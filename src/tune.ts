@@ -23,6 +23,16 @@ export const TUNE = {
   /** How fast speed above the cap bleeds away, per second. Boosted after abilities and impulses. */
   overspeedDecay: 14,
   overspeedDecayBoosted: 2.5,
+  /** Wall kick: how long after touching a wall a hop still kicks off it, the sideways speed (share of top speed), and the hop (share of a floor hop). */
+  wallKickWindow: 0.12,
+  wallKickSpeed: 0.62,
+  wallKickHop: 0.92,
+  /** Plow-through: a killing clean ram keeps this share of its speed (less for heavy wrecks). */
+  plowDrag: 0.09,
+  plowKeepMin: 0.62,
+  plowKeepMax: 0.9,
+  /** Share of the ability cooldown left after a ram kills. */
+  killCooldownKeep: 0.55,
   /** Integrity share under which onLowHp effects fire. */
   lowHp: 0.32,
 }

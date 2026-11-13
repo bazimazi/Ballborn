@@ -9,12 +9,12 @@
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="apple-touch-icon" href="icon.svg" />
     <meta name="description" content="Ballborn: a side-view action roguelite where the ball is the build." />
-    <meta name="theme-color" content="#100e0c" />
+    <meta name="theme-color" content="#07090d" />
     <title>Ballborn</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Ccircle cx=%278%27 cy=%278%27 r=%277%27 fill=%27%23ff5a1f%27/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;520;640;760;850&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;800&family=Outfit:wght@400;520;640;760;850&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
     <link rel="preload" as="image" href="art/foundry-v1/images/title-foundry.webp" type="image/webp" />
   </head>
   <body>
@@ -23,8 +23,8 @@
       <div id="hud" hidden>
         <header class="hud-top">
           <div class="meter integrity" id="hp-meter" role="group" aria-label="Integrity">
-            <div class="meter-label"><span class="meter-name"><i data-icon="heart"></i></span><span id="hp-num" class="meter-num"></span></div>
-            <div class="track hp-track"><div id="hp-chip" class="chip"></div><div id="hp-bar"></div><div id="shield-bar"></div></div>
+            <div class="meter-label"><span class="meter-name"><i data-icon="heart"></i><span class="meter-word">Integrity</span></span><span id="hp-num" class="meter-num"></span></div>
+            <div class="track hp-track"><div id="hp-chip" class="chip"></div><div id="hp-bar"></div><div id="shield-bar"></div><span class="hp-gloss"></span></div>
           </div>
           <div class="objective">
             <div id="room-name"></div>
@@ -40,10 +40,10 @@
           </div>
         </header>
         <div id="boss-bar" class="boss-bar" hidden>
-          <div class="boss-name"><span>Iron Colossus</span><b id="boss-phase"></b></div>
+          <div class="boss-name"><i data-icon="colossus"></i><span class="boss-title">Iron Colossus</span><span class="boss-pips" aria-hidden="true"><i></i><i></i><i></i></span><b id="boss-phase"></b></div>
           <div class="track boss-track"><div id="boss-chip" class="chip"></div><div id="boss-fill"></div><i style="left:34%"></i><i style="left:66%"></i></div>
         </div>
-        <div id="combo" class="combo" hidden aria-hidden="true"><b id="combo-num"></b><div class="combo-timer"><div id="combo-timer"></div></div></div>
+        <div id="combo" class="combo" hidden aria-hidden="true"><span class="combo-label">Combo</span><b id="combo-num"></b><div class="combo-timer"><div id="combo-timer"></div></div></div>
         <div id="banner" class="banner" aria-hidden="true"></div>
         <div id="prompt" class="prompt" hidden></div>
         <div class="rotate-hint" aria-hidden="true"><i data-icon="rotate"></i></div>
@@ -57,7 +57,7 @@
             </div>
           </div>
           <div class="readouts">
-            <div class="speed-meter" id="speed-meter"><i data-icon="gauge"></i><div class="track speed-track"><div id="speed-bar"></div><i class="notch"></i></div></div>
+            <div class="speed-meter" id="speed-meter"><i data-icon="gauge"></i><div class="speed-wrap"><div class="track speed-track"><div id="speed-bar"></div></div><i class="notch"></i></div><span class="ram-tag">Ram</span></div>
             <span id="instability-read"></span>
           </div>
           <button class="hop-btn" data-touch="hop" tabindex="-1" aria-label="Hop"><i data-icon="hop"></i></button>

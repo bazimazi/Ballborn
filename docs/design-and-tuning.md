@@ -39,6 +39,9 @@ One pipeline (`Simulation.hurt`, rules in `src/data/damage.ts`), in this order: 
 - **Shield block:** a frontal ram under the shield's break value deals 18% and takes 40% of the recoil. Hits from above pass.
 - **Armor:** rams under the armor gate are multiplied down; the number shows `ARMOR`.
 - Decision: a well-executed attack avoids retaliation completely. This rewards steering for every build rather than only heavy ones.
+- **Plow-through:** a clean ram that breaks the construct undoes the collision bounce and keeps `clamp(1 − (construct mass / ball mass) × 0.09, 0.62, 0.90)` of the ball's velocity (`TUNE.plowDrag`, `plowKeepMin`, `plowKeepMax`). Before this, every kill bounced the ball back, so a fast ball could never carry a run through a line of constructs. A ram that does not kill still rebounds.
+- **Kill refund:** any ram kill leaves 55% of the remaining ability cooldown (`TUNE.killCooldownKeep`). Aggression feeds the next dash or slam.
+- **Wall kick:** a hop pressed in the air within 0.12 s of touching a wall (`wallKickWindow`) sends the ball away from it at `max(|vx|, 62% of top speed)` with 92% of a floor hop (`wallKickSpeed`, `wallKickHop`). Only a fresh press counts (a held hop buffered for the floor never kicks), so float-holding near walls is unchanged.
 
 ## Abilities and overspeed
 
@@ -185,7 +188,12 @@ Everything here is cosmetic. The simulation reports what happened through `FxEve
 | Colossus phase / rivet | Big ring, debris, banner | Hit pause 160 ms / 90 ms |
 | Colossus down | Chain of explosions, slow motion | 1.5 s at 30% speed |
 | Ball breaks | Ball shatters, 1.4 s beat with "SHELL FAILED" before the summary | The first 0.5 s runs at 60% |
-| Clean-ram speed reached | Green pulse ring, rising chirp, glow and hot trail while it lasts | Arms at 55% of top speed, disarms under 49% |
+| Clean-ram speed reached | Green pulse ring, rising chirp, two charge arcs circling the ball, a hot ribbon trail | Arms at 55% of top speed, disarms under 49% |
+| Plow-through | Cone of sparks ahead of the ball, forward camera kick, zoom punch, a rip and thump | Kick 9 px, zoom +2.5% |
+| Wall kick | Dust puff and ring at the wall, sideways squash, knock-and-lift sound, a short buzz on touch | Kick 5 px |
+| Gate opens | Light burst with rays and two rings at the gate | Zoom +4%, trauma 0.25 |
+| Elite kill, rivet, Colossus phase, ball breaks, rams over 140 | Impact frame: one beat of inverted, desaturated contrast, then a warm afterglow | Rate limited to one per 0.7 s; off with screen flashes or camera motion |
+| Near top speed | Radial speed lines at the screen edge, redrawn 18 times a second | From 82% of top speed |
 
 Camera shake uses trauma (0-1, decays 1.25 per second). Shake is trauma squared times 16 px, plus a roll of up to 0.03 rad. Screen flashes are capped at 28% opacity.
 

@@ -227,7 +227,7 @@ export class Hud {
     this.style('hp-chip', 'width', `${this.hpChip.toFixed(1)}%`)
     this.style('shield-bar', 'width', `${Math.min(100, (sim.shield / sim.maxHp) * 100).toFixed(1)}%`)
     this.toggle('hp-meter', 'low', low)
-    this.text('hp-num', `${Math.ceil(sim.hp)}/${Math.ceil(sim.maxHp)}${sim.shield > 0 ? ` +${Math.ceil(sim.shield)}` : ''}`)
+    this.html('hp-num', `<b>${Math.ceil(sim.hp)}</b><small>/${Math.ceil(sim.maxHp)}</small>${sim.shield > 0 ? `<em>+${Math.ceil(sim.shield)}</em>` : ''}`)
     this.attr('hp-meter', 'aria-label', `Integrity ${Math.ceil(sim.hp)} of ${Math.ceil(sim.maxHp)}${sim.shield > 0 ? `, shield ${Math.ceil(sim.shield)}` : ''}`)
     this.text('room-name', sim.room.name)
     // The objective reads as an icon and a count; the sentence is for hover and screen readers.
@@ -254,7 +254,7 @@ export class Hud {
     const ability = build.ability
     const block = sim.abilityBlock()
     this.text('ability-key', keyName(save.settings.bindings.ability))
-    const state = !ability ? '' : block === 'cooldown' ? `${sim.abilityCd.toFixed(1)}` : block === 'energy' ? `⚡${Math.ceil(ability.energy)}` : ''
+    const state = !ability ? '' : block === 'cooldown' ? `${sim.abilityCd.toFixed(1)}s` : block === 'energy' ? `⚡${Math.ceil(ability.energy)}` : 'Ready'
     this.text('ability-state', state)
     const readyNow = !!ability && block === null
     if (readyNow && this.last.get('ability-readout@data-state') !== 'ready') this.pulse('ability-dial', [{ transform: 'scale(1.3)', filter: 'brightness(2)' }, { transform: 'scale(1)', filter: 'none' }], 420)
@@ -443,30 +443,35 @@ function titleHtml(view: View): string {
   const heat = view.save.heatUnlocked
   const picked = heatOf(view.heatPick)
   const heats = HEATS.filter((h) => h.id <= heat).map((h) =>
-    `<button class="btn heat-chip ${view.heatPick === h.id ? 'on' : ''}" data-act="heat" data-arg="${h.id}" aria-pressed="${view.heatPick === h.id}" aria-label="${esc(h.name)}" title="${esc(h.name)}">${svg('flame', 18)}<b>${h.id}</b></button>`,
+    `<button class="btn heat-chip ${view.heatPick === h.id ? 'on' : ''}" data-act="heat" data-arg="${h.id}" aria-pressed="${view.heatPick === h.id}" aria-label="${esc(h.name)}" title="${esc(h.name)}" style="--h:${h.id}">${svg('flame', 16)}<b>${h.id}</b></button>`,
   ).join('')
   const letters = (word: string, from: number) => word.split('').map((c, i) => `<span style="--i:${from + i}">${c}</span>`).join('')
   const cont = view.hasCheckpoint
+  const runSub = view.seedText ? `Seed ${esc(view.seedText)}` : view.heatPick > 0 ? `${esc(picked.name)} · fresh route` : 'A fresh route to the Colossus'
+  const cta = (word: string, sub: string) => `<span class="cta-text"><b>${word}</b><small>${sub}</small></span>${svg('back', 18, 'cta-arrow')}`
   return `<div class="title-wrap">
     <div class="title-lockup">
       <div class="title-brand">
+        <div class="title-eyebrow" aria-hidden="true"><span>Foundry roguelite</span></div>
         <h1 aria-label="Ballborn"><span class="logo-line">${letters('BALL', 0)}</span><span class="logo-line hot">${letters('BORN', 4)}</span></h1>
         <p class="tagline">Build a ball. Feel it. Break it. Rebuild it.</p>
       </div>
       <div class="title-actions">
         ${view.saveWarning ? `<p class="warn" role="status">${svg('warning', 18)} ${esc(view.saveWarning)}</p>` : ''}
         <nav class="title-menu" aria-label="Main menu">
-          ${cont ? `<button class="btn primary big" data-act="continue" data-autofocus>${svg('resume', 24)}<span>Continue</span></button>` : ''}
-          <button class="btn big ${cont ? '' : 'primary'}" data-act="launch" data-arg="run" ${cont ? '' : 'data-autofocus'}>${svg(cont ? 'plus' : 'play', 24)}<span>${cont ? 'New run' : view.save.seenTutorial ? 'Launch run' : 'Play'}</span></button>
+          ${cont ? `<button class="btn primary big cta" data-act="continue" data-autofocus><span class="cta-ico">${svg('resume', 22)}</span>${cta('Continue', 'Back to the last safe point')}</button>` : ''}
+          <button class="btn big cta ${cont ? 'secondary' : 'primary'}" data-act="launch" data-arg="run" ${cont ? '' : 'data-autofocus'}><span class="cta-ico">${svg(cont ? 'plus' : 'play', 22)}</span>${cta(cont ? 'New run' : view.save.seenTutorial ? 'Launch run' : 'Play', view.save.seenTutorial ? runSub : 'First ignition: learn to roll')}</button>
           ${view.save.seenTutorial ? dailyButton(view) : ''}
         </nav>
         <div class="tiles" role="group" aria-label="More">
-          ${tile('launch', 'flame', view.save.seenTutorial ? 'Tutorial' : 'Ignition', view.save.seenTutorial ? 'Replay first ignition' : 'First ignition', 'data-arg="tutorial"')}
-          ${tile('lab', 'flask', 'Lab', 'Ball lab')}
-          ${tile('codex', 'book', 'Codex')}
-          ${tile('settings', 'gear', 'Settings')}
+          ${tile('launch', 'flame', view.save.seenTutorial ? 'Tutorial' : 'Ignition', view.save.seenTutorial ? 'Replay first ignition' : 'First ignition', 'data-arg="tutorial" style="--i:0"')}
+          ${tile('lab', 'flask', 'Lab', 'Ball lab', 'style="--i:1"')}
+          ${tile('codex', 'book', 'Codex', 'Codex', 'style="--i:2"')}
+          ${tile('settings', 'gear', 'Settings', 'Settings', 'style="--i:3"')}
         </div>
-        ${heat > 0 ? `<div class="heat-row"><div class="row" role="group" aria-label="Forge heat">${heats}</div>
+        ${heat > 0 ? `<div class="heat-row">
+          <div class="heat-head"><span class="heat-label">${svg('flame', 14)} Forge heat</span><b>${esc(picked.name)}</b></div>
+          <div class="heat-seg" role="group" aria-label="Forge heat">${heats}</div>
           <ul class="heat-list">${picked.effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
         <details class="seed" ${view.seedText ? 'open' : ''}>
           <summary aria-label="Seed">${svg('hash', 18)}<span>Seed</span></summary>
@@ -491,7 +496,7 @@ function dailyButton(view: View): string {
   const key = view.dailyKey
   const d = view.save.daily?.key === key ? view.save.daily : null
   const best = d && d.tries ? `best ${d.best.toLocaleString('en-US')}${d.won ? ' ★' : ''}` : 'not yet run'
-  return `<button class="btn big daily" data-act="launch" data-arg="daily" aria-label="${esc(`Daily Forge for ${key}, ${best}`)}">${svg('star', 22)}<span>Daily Forge</span><small>${esc(key)} · ${esc(best)}</small></button>`
+  return `<button class="btn big cta daily" data-act="launch" data-arg="daily" aria-label="${esc(`Daily Forge for ${key}, ${best}`)}"><span class="cta-ico">${svg('star', 20)}</span><span class="cta-text"><b>Daily Forge</b><small>${esc(key)} · ${esc(best)}</small></span>${d?.won ? `<span class="daily-badge">${svg('check', 14)}</span>` : `<span class="daily-badge new">Today</span>`}</button>`
 }
 
 function settingsHtml(view: View): string {
@@ -572,8 +577,15 @@ const CODEX_TABS: { id: View['codexTab']; ico: IconName; word: string }[] = [
 
 function codexHtml(view: View): string {
   const tab = view.codexTab
+  const sv = view.save
+  const counts: Record<View['codexTab'], [number, number]> = {
+    components: [COMPONENTS.filter((c) => (c.pool === 'standard' ? sv.unlocked.includes(c.id) : sv.discoveredComponents.includes(c.id))).length, COMPONENTS.length],
+    synergies: [SYNERGIES.filter((s) => sv.discoveredSynergies.includes(s.id)).length, SYNERGIES.length],
+    enemies: [ENEMIES.filter((e) => sv.discoveredEnemies.includes(e.id)).length, ENEMIES.length],
+    achievements: [ACHIEVEMENTS.filter((a) => sv.achievements[a.id]?.done).length, ACHIEVEMENTS.length],
+  }
   const tabs = CODEX_TABS.map((t) =>
-    `<button class="btn tab ${tab === t.id ? 'on' : ''}" data-act="tab" data-arg="${t.id}" aria-pressed="${tab === t.id}">${svg(t.ico, 20)}<span>${t.word}</span></button>`,
+    `<button class="btn tab ${tab === t.id ? 'on' : ''}" data-act="tab" data-arg="${t.id}" aria-pressed="${tab === t.id}">${svg(t.ico, 20)}<span>${t.word}</span><small class="tab-count">${counts[t.id][0]}/${counts[t.id][1]}</small></button>`,
   ).join('')
   let body = ''
   if (tab === 'components') {
@@ -632,13 +644,17 @@ function codexHtml(view: View): string {
     <div class="tabs" role="group" aria-label="Codex sections">${tabs}</div></div>${body}</div>`
 }
 
-const NODE_W = 116
-const NODE_H = 78
+/** Route map geometry, in CSS pixels at interface size M. */
+const COL_W = 96
 const COL_GAP = 30
+const NODE_H = 106
 const ROW_GAP = 14
+const MEDAL = 56
+const BOSS_MEDAL = 92
+const RAIL_H = 34
 
 const NODE_ICON: Record<MapNode['type'], IconName> = {
-  combat: 'star', elite: 'crown', shop: 'tag', event: 'question', treasure: 'chest', traversal: 'wave', challenge: 'hourglass', boss: 'colossus',
+  combat: 'swords', elite: 'crown', shop: 'tag', event: 'question', treasure: 'chest', traversal: 'wave', challenge: 'hourglass', boss: 'colossus',
 }
 
 /** What a room pays, as icons. */
@@ -660,26 +676,57 @@ function riskLevel(risk: string): number {
   return 0
 }
 
+const RISK_WORD = ['Safe', 'Low risk', 'Medium risk', 'High risk']
+
+function riskPips(level: number): string {
+  return `<span class="risk" data-level="${level}" aria-hidden="true"><i></i><i></i><i></i></span>`
+}
+
+function payIcons(type: MapNode['type'], size = 16): string {
+  return `${NODE_REWARD[type].map((r) => icon(r, size)).join('')}${type === 'boss' ? svg('trophy', size) : type === 'event' ? svg('question', size) : ''}`
+}
+
+interface NodePos { x: number; y: number; w: number; h: number; m: number; cx: number; cy: number }
+
 function mapHtml(view: View): string {
   const run = view.run
   const build = view.build
   if (!run || !build) return ''
   // Nodes grow with the interface size so their labels still fit at L and XL.
   const k = Math.max(1, view.save.settings.hudScale)
-  const NW = Math.round(NODE_W * k)
-  const NH = Math.round(NODE_H * k)
+  // Short screens (landscape phones, zoomed windows) get a tighter graph so the whole route fits without a vertical scroll.
+  const compact = typeof window !== 'undefined' && window.innerHeight < 540
+  const c = compact ? 0.68 : 1
+  const CW = Math.round(COL_W * k * (compact ? 0.88 : 1))
+  const NH = Math.round(NODE_H * k * c)
+  const GAP = Math.round(COL_GAP * k * c)
+  const RG = Math.round(ROW_GAP * k * c)
+  const RAIL = Math.round(RAIL_H * k * (compact ? 0.82 : 1))
+  const medalOf = (n: MapNode) => Math.round((n.type === 'boss' ? BOSS_MEDAL : MEDAL) * k * (compact ? 0.72 : 1))
+  const heightOf = (n: MapNode) => (n.type === 'boss' ? medalOf(n) + Math.round(40 * k) : NH)
   const depth = Math.max(...run.nodes.map((n) => n.depth))
-  const maxRows = Math.max(...Array.from({ length: depth + 1 }, (_, d) => run.nodes.filter((n) => n.depth === d).length))
-  const height = maxRows * NH + (maxRows - 1) * ROW_GAP
-  const width = (depth + 1) * NW + depth * COL_GAP
-  const pos = new Map<string, { x: number; y: number }>()
-  for (let d = 0; d <= depth; d++) {
-    const col = run.nodes.filter((n) => n.depth === d)
-    const colH = col.length * NH + (col.length - 1) * ROW_GAP
-    col.forEach((n, i) => pos.set(n.id, { x: d * (NW + COL_GAP), y: (height - colH) / 2 + i * (NH + ROW_GAP) }))
-  }
+  const cols = Array.from({ length: depth + 1 }, (_, d) => run.nodes.filter((n) => n.depth === d))
+  const colH = (col: MapNode[]) => col.reduce((s, n) => s + heightOf(n), 0) + Math.max(0, col.length - 1) * RG
+  const body = Math.max(...cols.map(colH))
+  const height = RAIL + body
+  const width = (depth + 1) * CW + depth * GAP
+  const pos = new Map<string, NodePos>()
+  cols.forEach((col, d) => {
+    let y = RAIL + (body - colH(col)) / 2
+    for (const n of col) {
+      const h = heightOf(n)
+      const m = medalOf(n)
+      const x = d * (CW + GAP)
+      pos.set(n.id, { x, y, w: CW, h, m, cx: x + CW / 2, cy: y + 4 + m / 2 })
+      y += h + RG
+    }
+  })
+  const cur = run.nodes.find((n) => n.id === run.currentId)
+  const curDepth = cur ? cur.depth : -1
   const onPath = new Set(run.nodes.filter((n) => n.state === 'done' || n.state === 'active').map((n) => n.id))
-  let edges = ''
+  // Edges are cubic curves from medal edge to medal edge; live ones draw last so they sit on top.
+  const order = { missed: 0, future: 1, taken: 2, reachable: 3 } as const
+  const edges: { cls: keyof typeof order; d: string }[] = []
   for (const n of run.nodes) {
     const a = pos.get(n.id)!
     for (const id of n.next) {
@@ -687,49 +734,79 @@ function mapHtml(view: View): string {
       const b = pos.get(id)
       if (!m || !b) continue
       const cls = onPath.has(n.id) && onPath.has(id) ? 'taken' : n.state === 'done' && m.state === 'open' ? 'reachable' : n.state === 'missed' || m.state === 'missed' ? 'missed' : 'future'
-      edges += `<line class="${cls}" x1="${a.x + NW}" y1="${a.y + NH / 2}" x2="${b.x}" y2="${b.y + NH / 2}" />`
+      const sx = a.cx + a.m / 2 + 3
+      const ex = b.cx - b.m / 2 - 3
+      const bend = (ex - sx) * 0.55
+      edges.push({ cls, d: `M${sx.toFixed(1)} ${a.cy.toFixed(1)}C${(sx + bend).toFixed(1)} ${a.cy.toFixed(1)} ${(ex - bend).toFixed(1)} ${b.cy.toFixed(1)} ${ex.toFixed(1)} ${b.cy.toFixed(1)}` })
     }
   }
+  edges.sort((p, q) => order[p.cls] - order[q.cls])
+  const paths = edges.map((e) => `${e.cls === 'reachable' || e.cls === 'taken' ? `<path class="halo ${e.cls}" d="${e.d}" />` : ''}<path class="${e.cls}" d="${e.d}" />`).join('')
+  // The depth rail: one tick per layer, filled up to where the ball is.
+  const tickX = (d: number) => d * (CW + GAP) + CW / 2
+  const rail = `<div class="depth-rail" aria-hidden="true" style="left:${tickX(0)}px;width:${tickX(depth) - tickX(0)}px;--prog:${depth ? (Math.max(0, curDepth) / depth) * 100 : 0}%"></div>${cols.map((_, d) => {
+    const st = d < curDepth ? 'past' : d === curDepth ? 'here' : d === curDepth + 1 ? 'next' : ''
+    return `<span class="depth-tick ${st}${d === depth ? ' boss' : ''}" style="left:${tickX(d)}px" aria-hidden="true">${d === depth ? svg('skull', 13) : d + 1}</span>`
+  }).join('')}`
   const picked = run.nodes.find((n) => n.id === view.selectedNode && n.state === 'open')
-  const first = picked ?? run.nodes.find((n) => n.state === 'open')
-  const nodes = run.nodes.map((n) => nodeButton(n, build, run, pos.get(n.id)!, n === first, n === picked, NW, NH)).join('')
+  const open = run.nodes.filter((n) => n.state === 'open')
+  const first = picked ?? open[0]
+  const nodes = run.nodes.map((n) => nodeButton(n, build, run, pos.get(n.id)!, n === first, n === picked, open.indexOf(n))).join('')
   const stats = `${chip(svg('heart', 18), `${Math.ceil(run.hp)}/${Math.round(build.stats.maxHp)}`, `Integrity ${Math.ceil(run.hp)} of ${Math.round(build.stats.maxHp)}`, 'hp')}${run.heat ? chip(svg('flame', 18), `${run.heat}`, `Forge heat ${run.heat}`, 'heat') : ''}`
-  return `<div class="panel stack scroll route">
-    ${header('Route', '', { right: `${stats}${currencies(view.save, run)}${iconBtn('menu', 'menu', 'Build and menu')}` })}
+  const kicker = curDepth < 0 ? 'The foundry route' : `Depth ${curDepth + 1} of ${depth + 1}`
+  // Touch picks a room first and confirms with Go; with a pointer or keys, the hovered or focused room is described below the map.
+  const foot = view.touch
+    ? picked ? nodeInfo(picked, build, run) : `<p class="map-hint">${svg('info', 16)} Tap a glowing room to see what it holds.</p>`
+    : `<div class="peeks">${open.map((n, i) => `<div class="node-peek${n === first ? ' first' : ''}" data-for="${i}" aria-hidden="true">${nodeSummary(n, build, run)}</div>`).join('')}</div>`
+  return `<div class="panel stack scroll route${compact ? ' compact' : ''}">
+    ${header('Route', kicker, { right: `${stats}${currencies(view.save, run)}${iconBtn('menu', 'menu', 'Build and menu')}` })}
     <div class="map-scroll"><div class="map" style="width:${width}px;height:${height}px">
-      <svg class="edges" width="${width}" height="${height}" aria-hidden="true">${edges}</svg>
+      ${rail}
+      <svg class="edges" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true">${paths}</svg>
       ${nodes}
     </div></div>
-    ${picked ? nodeInfo(picked, build, run) : ''}
-    <div class="map-legend" aria-hidden="true"><span>${svg('warning', 14)} risk</span><span>${icon('slot-core', 14)} part</span><span>${icon('currency-cinders', 14)} cinders</span><span>${icon('currency-embers', 14)} ember</span></div>
+    <div class="map-foot">
+      ${foot}
+      <div class="map-legend" aria-hidden="true"><span>${riskPips(2)} risk</span><span>${icon('slot-core', 14)} part</span><span>${icon('currency-cinders', 14)} cinders</span><span>${icon('currency-embers', 14)} ember</span></div>
+    </div>
   </div>`
+}
+
+/** A room described: medallion, name, risk, pay, and advice. */
+function nodeSummary(n: MapNode, build: CompiledBuild, run: RunState): string {
+  const info = routeInfo(n.type, build, run)
+  const risk = riskLevel(info.risk)
+  return `<span class="medal big type-${n.type}" aria-hidden="true"><span class="medal-face">${svg(NODE_ICON[n.type] ?? 'star', 24)}</span></span>
+    <div class="ni-text">
+      <span class="ni-kicker">Depth ${n.depth + 1} · ${n.type === 'boss' ? 'Final hold' : 'Available'}</span>
+      <b>${esc(info.label)}</b>
+      <div class="ni-facts">
+        <span class="ni-risk" data-level="${risk}">${riskPips(risk)}<span><em>${RISK_WORD[risk]}</em> ${esc(info.risk.replace(/^(None|Low|Medium|High|Final)[.,]?\s*/, ''))}</span></span>
+        <span class="ni-reward"><span class="pays">${payIcons(n.type)}</span><span>${esc(info.reward)}</span></span>
+      </div>
+      ${info.advice ? `<span class="small advice">${svg('spark', 13)} ${esc(info.advice)}</span>` : ''}
+    </div>`
 }
 
 /** The picked room, spelled out, with a big button to go. */
 function nodeInfo(n: MapNode, build: CompiledBuild, run: RunState): string {
   const info = routeInfo(n.type, build, run)
   return `<div class="node-info" role="region" aria-label="${esc(info.label)}">
-    <span class="glyph big" aria-hidden="true">${svg(NODE_ICON[n.type] ?? 'star', 26)}</span>
-    <div class="ni-text">
-      <b>${esc(info.label)}</b>
-      <span class="small"><span class="down">${svg('warning', 14)}</span> ${esc(info.risk)}</span>
-      <span class="small"><span class="up">${svg('plus', 14)}</span> ${esc(info.reward)}</span>
-      ${info.advice ? `<span class="small advice">${esc(info.advice)}</span>` : ''}
-    </div>
-    <button class="btn primary go" data-act="enter" data-arg="${n.id}" data-go="1" aria-label="Enter ${esc(info.label)}">${svg('play', 22)}<span>Go</span></button>
+    ${nodeSummary(n, build, run)}
+    <button class="btn primary go" data-act="enter" data-arg="${n.id}" data-go="1" aria-label="Enter ${esc(info.label)}">${svg('play', 20)}<span>Go</span></button>
   </div>`
 }
 
-function nodeButton(n: MapNode, build: CompiledBuild, run: RunState, p: { x: number; y: number }, focus: boolean, selected: boolean, w = NODE_W, h = NODE_H): string {
+function nodeButton(n: MapNode, build: CompiledBuild, run: RunState, p: NodePos, focus: boolean, selected: boolean, pick: number): string {
   const info = routeInfo(n.type, build, run)
   const state = n.state === 'open' ? 'Available' : n.state === 'done' ? 'Cleared' : n.state === 'active' ? 'Here' : n.state === 'missed' ? 'Passed by' : 'Later'
   const risk = riskLevel(info.risk)
-  const meta = n.state === 'open'
-    ? `<span class="node-meta"><span class="risk" data-level="${risk}" aria-hidden="true"><i></i><i></i><i></i></span><span class="pays">${NODE_REWARD[n.type].map((r) => icon(r, 16)).join('')}${n.type === 'boss' ? svg('trophy', 16) : n.type === 'event' ? svg('question', 16) : ''}</span></span>`
-    : n.state === 'done' ? `<span class="node-state">${svg('check', 16)}</span>` : n.state === 'missed' ? `<span class="node-state">${svg('close', 14)}</span>` : ''
+  const meta = n.state === 'open' ? `<span class="node-meta">${riskPips(risk)}<span class="pays">${payIcons(n.type, 14)}</span></span>` : ''
   const here = run.currentId === n.id && (n.state === 'done' || n.state === 'active')
-  return `<button class="btn node ${n.state} type-${n.type}${here ? ' here' : ''}${selected ? ' selected' : ''}" style="left:${p.x}px;top:${p.y}px;width:${w}px;height:${h}px;--d:${n.depth}" data-act="enter" data-arg="${n.id}" ${n.state === 'open' ? '' : 'disabled'} ${focus ? 'data-autofocus' : ''} title="${esc(`${info.label}. Risk: ${info.risk} Reward: ${info.reward} ${info.advice}`)}" aria-label="${esc(`${info.label}. ${state}. ${n.state === 'open' ? `Risk: ${info.risk} Reward: ${info.reward} ${info.advice}` : ''}`)}">
-    <span class="node-head"><span class="glyph" aria-hidden="true">${svg(NODE_ICON[n.type] ?? 'star', 18)}</span><b>${esc(info.label)}</b></span>${meta}
+  const badge = n.state === 'done' ? `<span class="medal-badge">${svg('check', 12)}</span>` : n.state === 'missed' ? `<span class="medal-badge">${svg('close', 10)}</span>` : ''
+  return `<button class="btn node ${n.state} type-${n.type}${here ? ' here' : ''}${selected ? ' selected' : ''}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px;--m:${p.m}px;--d:${n.depth}" data-act="enter" data-arg="${n.id}" ${pick >= 0 ? `data-pick="${pick}"` : ''} ${n.state === 'open' ? '' : 'disabled'} ${focus ? 'data-autofocus' : ''} aria-label="${esc(`${info.label}. ${state}. ${n.state === 'open' ? `Risk: ${info.risk} Reward: ${info.reward} ${info.advice}` : ''}`)}">
+    <span class="medal" aria-hidden="true"><span class="medal-face">${svg(NODE_ICON[n.type] ?? 'star', Math.round(p.m * 0.44))}</span>${badge}${here ? '<span class="here-mark"></span>' : ''}</span>
+    <span class="node-label">${esc(info.label)}</span>${meta}
   </button>`
 }
 
@@ -738,11 +815,12 @@ function rewardHtml(view: View): string {
   const salvage = run ? salvageValue(run.offerKind) : 0
   const rerolls = run?.rerolls ?? 0
   const actions = `<button class="btn icon-btn badge-btn" data-act="reroll" ${rerolls > 0 ? '' : 'disabled'} aria-label="Reroll (${rerolls} tokens)" title="Reroll (${rerolls} tokens)">${svg('dice')}<span class="badge">${rerolls}</span></button>
-    ${run?.tutorial ? '' : `<button class="btn salvage" data-act="salvage" aria-label="Keep the ball and take ${salvage} cinders" title="Keep the ball: +${salvage} cinders">${svg('recycle', 20)}${icon('currency-cinders', 18)}<b>+${salvage}</b></button>`}`
+    ${run?.tutorial ? '' : `<button class="btn salvage" data-act="salvage" aria-label="Keep the ball and take ${salvage} cinders" title="Keep the ball: +${salvage} cinders">${svg('recycle', 20)}<span class="salvage-word">Skip</span>${icon('currency-cinders', 18)}<b>+${salvage}</b></button>`}`
   const g = run && !run.tutorial && run.offerKind !== 'treasure' ? run.grades[run.grades.length - 1] : undefined
   const gradeLine = g ? gradeBadge(g) : ''
+  const kicker = !run ? '' : run.offerKind === 'elite' ? 'Elite spoils' : run.offerKind === 'treasure' ? 'Treasure' : run.tutorial ? 'First spoils' : 'Room spoils'
   return `<div class="panel stack scroll reward">
-    ${header('Choose one', '', { right: actions })}
+    ${header('Choose one', kicker, { right: actions })}
     ${gradeLine}
     <div class="cards">${view.offers.map((o, i) => offerCard(o, i, view)).join('')}</div>
   </div>`
@@ -765,23 +843,29 @@ export function gradeBadge(g: RoomGrade): string {
 function hpLine(h: NonNullable<Offer['hp']>): string {
   if (Math.round(h.maxAfter) === Math.round(h.maxBefore)) return ''
   const cls = h.maxAfter > h.maxBefore ? 'up' : 'down'
-  return `<span class="${cls} hp-line" aria-label="Integrity ${Math.round(h.before)} of ${Math.round(h.maxBefore)} becomes ${Math.round(h.after)} of ${Math.round(h.maxAfter)}">${svg('heart', 16)} ${Math.round(h.maxBefore)} → <b>${Math.round(h.maxAfter)}</b></span>`
+  return `<span class="${cls} hp-line" aria-label="Integrity ${Math.round(h.before)} of ${Math.round(h.maxBefore)} becomes ${Math.round(h.after)} of ${Math.round(h.maxAfter)}">${svg('heart', 15)}<span class="muted">Integrity</span> ${Math.round(h.maxBefore)} <span class="arrow">→</span> <b>${Math.round(h.maxAfter)}</b></span>`
 }
+
+const KIND_WORD: Record<Offer['kind'], string> = { component: 'Part', heal: 'Weld', cinders: 'Cinders', reroll: 'Reroll', ember: 'Ember' }
 
 function offerCard(o: Offer, i: number, view: View): string {
   const bars = (o.bars ?? []).map((b) => {
     const delta = b.next - b.current
-    const mark = Math.abs(delta) < 0.02 ? '' : delta > 0 ? `<span class="up">${svg('up', 10)}</span>` : `<span class="down">${svg('down', 10)}</span>`
-    return `<div class="bar-row"><span>${b.label}${mark}</span><span class="bar" aria-hidden="true"><i style="width:${b.current * 100}%"></i><em style="width:${b.next * 100}%"></em></span></div>`
+    const dir = Math.abs(delta) < 0.02 ? 'same' : delta > 0 ? 'gain' : 'loss'
+    const lo = Math.max(0, Math.min(1, Math.min(b.current, b.next))) * 100
+    const hi = Math.max(0, Math.min(1, Math.max(b.current, b.next))) * 100
+    const mark = dir === 'same' ? '' : `<span class="${dir === 'gain' ? 'up' : 'down'}">${svg(dir === 'gain' ? 'up' : 'down', 10)}</span>`
+    return `<div class="bar-row ${dir}"><span>${b.label}${mark}</span><span class="bar delta" aria-hidden="true" style="--a:${lo.toFixed(1)}%;--b:${hi.toFixed(1)}%"><i></i><em></em></span></div>`
   }).join('')
   let numbers = ''
   if (o.kind === 'component' && o.componentId && o.slot && view.run && view.build) {
     const p = previewSwap(view.run, o.slot, o.componentId, view.save)
     numbers = `<details><summary>${svg('info', 16)} Numbers</summary>${statTable(p.current.stats, p.next.stats)}</details>`
   }
-  const amount = o.kind === 'heal' ? `${svg('heart', 20)} +${o.amount}` : o.kind === 'cinders' ? `${icon('currency-cinders', 20)} +${o.amount}` : o.kind === 'reroll' ? `${svg('dice', 20)} +${o.amount}` : o.kind === 'ember' ? `${icon('currency-embers', 20)} +${o.amount}` : ''
+  const amount = o.kind === 'heal' ? `${svg('heart', 22)} +${o.amount}` : o.kind === 'cinders' ? `${icon('currency-cinders', 22)} +${o.amount}` : o.kind === 'reroll' ? `${svg('dice', 22)} +${o.amount}` : o.kind === 'ember' ? `${icon('currency-embers', 22)} +${o.amount}` : ''
   const tradeoff = o.kind === 'component' && o.bars?.some((b) => b.next < b.current - 0.02) && o.bars?.some((b) => b.next > b.current + 0.02)
   const art = o.slot ? `slot-${o.slot}` : o.kind === 'cinders' ? 'currency-cinders' : o.kind === 'ember' ? 'currency-embers' : o.kind === 'heal' ? 'core-balanced' : 'slot-passive'
+  const bigArt = o.kind === 'heal' ? svg('heart', 56) : o.kind === 'reroll' ? svg('dice', 56) : icon(art, 64)
   const chips = [
     ...(o.gained ?? []).map((g) => `<span class="tag up">${svg('link', 14)}${esc(g)}</span>`),
     ...(o.lost ?? []).map((l) => `<span class="tag down">${svg('unlink', 14)}${esc(l)}</span>`),
@@ -791,44 +875,57 @@ function offerCard(o: Offer, i: number, view: View): string {
   const banish = o.kind === 'component' && view.run && !view.run.tutorial
     ? `<button class="btn icon-btn banish" data-act="banish" data-arg="${i}" ${banishes > 0 ? '' : 'disabled'} aria-label="Banish ${esc(o.title)} for this run (${banishes} left)" title="Banish for this run (${banishes} left)">${svg('close', 16)}</button>`
     : ''
-  return `<article class="card kind-${o.kind}" data-rarity="${o.rarity ?? 'common'}" style="--i:${i}" title="${esc(o.description)}">
-    <div class="card-head">${icon(art, 30)}<div class="rarity ${o.rarity ?? ''}">${o.slot ? SLOT_LABEL[o.slot] : o.kind}${o.rarity ? ` · ${o.rarity}` : ''}</div>${tradeoff ? `<span class="trade" title="Trade-off">${svg('swap', 16)}</span>` : ''}<span class="card-key kbd" aria-hidden="true">${i + 1}</span>${banish}</div>
-    <div class="card-body">
-    ${o.kind === 'component' ? `<canvas data-preview="${i}" width="280" height="110" aria-hidden="true"></canvas>` : ''}
-    <strong class="card-title">${esc(o.title)}</strong>
-    ${o.kind === 'component' ? `<span class="small muted swap-line">${o.replaces ? `${svg('swap', 14)} ${esc(o.replaces.name)}` : `${svg('plus', 14)} Empty slot`}</span>` : ''}
-    ${amount ? `<span class="amount">${amount}</span>` : ''}
-    ${o.upside ? `<span class="up">${svg('up', 12)} ${esc(o.upside)}</span>` : ''}
-    ${o.downside ? `<span class="down">${svg('down', 12)} ${esc(o.downside)}</span>` : ''}
-    ${o.hp ? hpLine(o.hp) : ''}
-    ${chips ? `<div class="chips">${chips}</div>` : ''}
-    ${bars ? `<div class="bars">${bars}</div>` : ''}
-    ${numbers}
+  const rarity = o.rarity ?? 'common'
+  return `<article class="card kind-${o.kind}" data-rarity="${rarity}" style="--i:${i}" title="${esc(o.description)}">
+    <div class="card-head">
+      <span class="card-key kbd" aria-hidden="true">${i + 1}</span>
+      <div class="rarity ${o.rarity ?? ''}">${o.slot ? `${SLOT_LABEL[o.slot]}<i></i>${o.rarity ?? ''}` : KIND_WORD[o.kind]}</div>
+      ${tradeoff ? `<span class="trade" title="Trade-off">${svg('swap', 14)}<span>Trade-off</span></span>` : ''}
+      ${banish}
     </div>
-    <button class="btn primary take" data-act="offer" data-arg="${i}" ${i === 0 ? 'data-autofocus' : ''} aria-label="Take ${esc(o.title)}">${svg('check', 22)}</button>
+    <div class="card-art${o.kind === 'component' ? ' live' : ''}">
+      ${o.kind === 'component' ? `<canvas data-preview="${i}" width="280" height="110" aria-hidden="true"></canvas>` : `<span class="art-big" aria-hidden="true">${bigArt}</span>`}
+      <span class="art-badge" aria-hidden="true">${icon(art, 26)}</span>
+    </div>
+    <div class="card-body">
+      <strong class="card-title">${esc(o.title)}</strong>
+      ${o.kind === 'component' ? `<span class="small muted swap-line">${o.replaces ? `${svg('swap', 14)} Replaces <b>${esc(o.replaces.name)}</b>` : `${svg('plus', 14)} Fills an empty slot`}</span>` : ''}
+      ${amount ? `<span class="amount">${amount}</span>` : ''}
+      ${o.upside || o.downside ? `<div class="effects">${o.upside ? `<span class="up">${svg('up', 12)} ${esc(o.upside)}</span>` : ''}${o.downside ? `<span class="down">${svg('down', 12)} ${esc(o.downside)}</span>` : ''}</div>` : ''}
+      ${o.hp ? hpLine(o.hp) : ''}
+      ${chips ? `<div class="chips">${chips}</div>` : ''}
+      ${bars ? `<div class="bars">${bars}</div>` : ''}
+      ${numbers}
+    </div>
+    <button class="btn primary take" data-act="offer" data-arg="${i}" ${i === 0 ? 'data-autofocus' : ''} aria-label="Take ${esc(o.title)}">${svg('check', 20)}<span>Take</span></button>
   </article>`
 }
 
-function shopIcon(item: ShopItem): string {
+function shopIcon(item: ShopItem, size = 40): string {
   if (item.kind === 'component' && item.componentId) {
     const comp = COMPONENT_MAP[item.componentId]
-    if (comp) return slotIcon(comp.slot, 34)
+    if (comp) return slotIcon(comp.slot, size)
   }
-  if (item.kind === 'heal') return svg('heart', 34)
-  if (item.kind === 'reroll') return svg('dice', 34)
-  if (item.kind === 'ember') return icon('currency-embers', 34)
-  return svg('tag', 34)
+  if (item.kind === 'heal') return svg('heart', size)
+  if (item.kind === 'reroll') return svg('dice', size)
+  if (item.kind === 'ember') return icon('currency-embers', size)
+  return svg('tag', size)
 }
 
 function shopHtml(view: View): string {
   const run = view.run
   const cinders = run?.cinders ?? 0
-  const rows = view.shop.map((item) => {
+  const rows = view.shop.map((item, i) => {
     const chips: string[] = []
     let rarity = ''
+    let kind = item.kind === 'heal' ? 'Weld' : item.kind === 'reroll' ? 'Token' : item.kind === 'ember' ? 'Ember' : 'Part'
+    let swatchColor = ''
     if (item.kind === 'component' && item.componentId && run) {
       const comp = COMPONENT_MAP[item.componentId]!
       rarity = comp.rarity
+      kind = `${SLOT_LABEL[comp.slot]} · ${comp.rarity}`
+      const v = comp.visual
+      swatchColor = v?.core ?? v?.shell ?? v?.trail ?? ''
       const p = previewSwap(run, comp.slot, comp.id, view.save)
       chips.push(`<span class="tag">${svg(p.replaced ? 'swap' : 'plus', 14)}${p.replaced ? esc(p.replaced.name) : 'Empty slot'}</span>`)
       for (const g of p.gained) chips.push(`<span class="tag up">${svg('link', 14)}${esc(g)}</span>`)
@@ -838,16 +935,24 @@ function shopHtml(view: View): string {
     const short = cinders < item.cost && !item.sold ? item.cost - cinders : 0
     const whole = item.kind === 'heal' && !item.sold && !!view.run && !!view.build && view.run.hp >= view.build.stats.maxHp - 0.5
     const label = `${item.title}. ${item.sold ? 'Sold.' : whole ? 'Your shell is already whole.' : `${item.cost} cinders${short ? `, need ${short} more` : ''}.`} ${item.detail}`
-    return `<button class="btn shop-item kind-${item.kind} ${item.sold ? 'sold' : ''}" data-rarity="${rarity}" data-act="buy" data-arg="${item.id}" ${item.sold || short || whole ? 'disabled' : ''} aria-label="${esc(label)}">
-      <span class="si-icon">${shopIcon(item)}</span>
-      <span class="si-body"><b>${esc(item.title)}</b>${item.kind === 'component' ? '' : `<span class="small muted">${esc(item.detail)}</span>`}${chips.length ? `<span class="chips">${chips.join('')}</span>` : ''}</span>
-      <span class="price">${item.sold ? svg('check', 18) : `${short ? svg('lock', 14) : ''}${icon('currency-cinders', 18)}<b>${item.cost}</b>`}</span>
+    const state = item.sold ? 'sold' : whole ? 'whole' : short ? 'short' : 'can'
+    const price = item.sold
+      ? `<span class="price sold">${svg('check', 16)}<b>Sold</b></span>`
+      : `<span class="price ${state}">${short ? svg('lock', 14) : ''}${icon('currency-cinders', 18)}<b>${item.cost}</b>${short ? `<small>need ${short}</small>` : whole ? '<small>whole</small>' : ''}</span>`
+    return `<button class="btn shop-item kind-${item.kind} ${item.sold ? 'sold' : ''} ${state}" data-rarity="${rarity}" data-act="buy" data-arg="${item.id}" style="--i:${i}${swatchColor ? `;--c:${swatchColor}` : ''}" ${item.sold || short || whole ? 'disabled' : ''} aria-label="${esc(label)}">
+      <span class="si-top"><span class="si-icon">${shopIcon(item)}</span><span class="si-kind rarity ${rarity}">${esc(kind)}</span></span>
+      <span class="si-body"><b class="si-title">${esc(item.title)}</b>${item.kind === 'component' ? '' : `<span class="small muted">${esc(item.detail)}</span>`}${chips.length ? `<span class="chips">${chips.join('')}</span>` : ''}</span>
+      ${price}
+      ${item.sold ? '<span class="sold-stamp" aria-hidden="true">Sold</span>' : ''}
     </button>`
   }).join('')
   return `<div class="panel stack scroll shop">
-    ${header('Shop', '', { right: currencies(view.save, run) })}
+    ${header('Shop', 'Foundry market', { right: currencies(view.save, run) })}
     <div class="shop-grid">${rows}</div>
-    <button class="btn primary leave" data-act="leave-shop" data-autofocus>${svg('exit', 20)}<span>Leave</span></button>
+    <div class="shop-foot">
+      <span class="wallet">${icon('currency-cinders', 22)}<b>${cinders}</b><span class="muted">to spend</span></span>
+      <button class="btn primary leave" data-act="leave-shop" data-autofocus>${svg('exit', 20)}<span>Leave</span></button>
+    </div>
   </div>`
 }
 
@@ -861,36 +966,40 @@ function eventHtml(view: View): string {
     if (c.cost?.freeAnneal) out.push(`<span class="tag up">${svg('check', 14)} Free</span>`)
     return out.join('')
   }
-  return `<div class="panel stack scroll narrow event">
-    ${header(ev.title, '', { right: currencies(view.save, view.run) })}
-    <p class="event-body">${esc(ev.body)}</p>
-    <div class="stack">${ev.choices.map((c, i) => `<button class="btn event-choice" data-act="event" data-arg="${c.id}" ${c.disabled ? 'disabled' : ''} ${i === 0 && !c.disabled ? 'data-autofocus' : ''}>
-      <span class="ec-head"><b>${esc(c.title)}</b>${cost(c)}</span>
-      <span class="small muted">${esc(c.detail)}</span>
-      ${c.disabled ? `<span class="small down">${svg('lock', 14)} ${esc(c.disabled)}</span>` : ''}
-    </button>`).join('')}</div>
+  return `<div class="panel stack scroll event">
+    ${header(ev.title, 'Event', { right: currencies(view.save, view.run) })}
+    <div class="event-story"><span class="event-glyph" aria-hidden="true">${svg('sparkle', 30)}</span><p class="event-body">${esc(ev.body)}</p></div>
+    <div class="event-choices">${ev.choices.map((c, i) => {
+      const price = cost(c)
+      return `<button class="btn event-choice" style="--i:${i}" data-act="event" data-arg="${c.id}" ${c.disabled ? 'disabled' : ''} ${i === 0 && !c.disabled ? 'data-autofocus' : ''}>
+      <span class="ec-head"><b>${esc(c.title)}</b>${svg('back', 16, 'ec-arrow')}</span>
+      ${price ? `<span class="chips ec-cost">${price}</span>` : ''}
+      <span class="ec-detail">${esc(c.detail)}</span>
+      ${c.disabled ? `<span class="small down ec-lock">${svg('lock', 14)} ${esc(c.disabled)}</span>` : ''}
+    </button>`
+    }).join('')}</div>
   </div>`
 }
 
 function pauseHtml(view: View): string {
   const build = view.build
   if (view.confirmAbandon) {
-    return `<div class="panel stack narrow" role="alertdialog" aria-labelledby="abandon-title">
+    return `<div class="panel stack narrow confirm" role="alertdialog" aria-labelledby="abandon-title">
+      <span class="confirm-glyph" aria-hidden="true">${svg('flag', 30)}</span>
       <div class="kicker">Abandon run</div>
-      <h2 id="abandon-title">${svg('flag', 26)} Leave this run?</h2>
-      <p>${view.run && view.run.roomsCleared > 0 ? 'You keep the scrap a death would pay.' : 'No room cleared yet: it pays nothing.'}</p>
+      <h2 id="abandon-title">Leave this run?</h2>
+      <p class="muted">${view.run && view.run.roomsCleared > 0 ? 'You keep the scrap a death would pay.' : 'No room cleared yet: it pays nothing.'}</p>
       <div class="row two"><button class="btn" data-act="abandon-cancel" data-autofocus>${svg('back', 20)}<span>Keep playing</span></button><button class="btn danger" data-act="abandon-confirm">${svg('flag', 20)}<span>Abandon</span></button></div>
     </div>`
   }
   return `<div class="panel stack narrow pause">
-    <div class="kicker">Paused</div>
-    <h2>${build ? esc(build.archetype) : 'Ballborn'}</h2>
+    <div class="pause-head"><div><div class="kicker">Paused</div><h2>${build ? esc(build.archetype) : 'Ballborn'}</h2></div></div>
     ${build ? slotGrid(build) : ''}
     <button class="btn primary big resume" data-act="resume" data-autofocus>${svg('resume', 24)}<span>Resume</span></button>
     <div class="tiles">
-      ${tile('settings', 'gear', 'Settings')}
-      ${tile('codex', 'book', 'Codex')}
-      ${tile('abandon', 'flag', 'Abandon', 'Abandon run', '', 'danger')}
+      ${tile('settings', 'gear', 'Settings', 'Settings', 'style="--i:0"')}
+      ${tile('codex', 'book', 'Codex', 'Codex', 'style="--i:1"')}
+      ${tile('abandon', 'flag', 'Abandon', 'Abandon run', 'style="--i:2"', 'danger')}
     </div>
   </div>`
 }
@@ -904,13 +1013,19 @@ function summaryHtml(view: View): string {
       ? `<ul class="breakdown">${rows.map(([label, n]) => `<li><span>${esc(label)}</span><span class="bar" aria-hidden="true"><em style="width:${(n / max) * 100}%"></em></span><b>${Math.round(n)}</b></li>`).join('')}</ul>`
       : '<p class="muted small">Nothing recorded.</p>'
   }
+  const emblem = s.kind === 'victory' ? 'trophy' : s.kind === 'abandon' ? 'flag' : 'skull'
   return `<div class="panel stack scroll summary ${s.kind}">
-    <div class="kicker">${s.kind === 'victory' ? 'The Colossus is scrap' : s.kind === 'abandon' ? 'Run abandoned' : 'The ball breaks'}</div>
-    <h2 class="summary-title">${svg(s.kind === 'victory' ? 'trophy' : s.kind === 'abandon' ? 'flag' : 'skull', 34)} ${esc(s.title)}</h2>
-    ${s.cause ? `<p class="cause" aria-label="Cause: ${esc(s.cause)}">${svg('skull', 18)}<b>${esc(s.cause)}</b></p>` : ''}
+    <div class="summary-hero">
+      <span class="hero-emblem" aria-hidden="true">${svg(emblem, 40)}</span>
+      <div class="hero-text">
+        <div class="kicker">${s.kind === 'victory' ? 'The Colossus is scrap' : s.kind === 'abandon' ? 'Run abandoned' : 'The ball breaks'}</div>
+        <h2 class="summary-title">${esc(s.title)}</h2>
+        ${s.cause ? `<p class="cause" aria-label="Cause: ${esc(s.cause)}">${svg('skull', 16)}<b>${esc(s.cause)}</b></p>` : ''}
+      </div>
+    </div>
     <div class="score-block${s.newBest ? ' best' : ''}" aria-label="${esc(`Score ${s.score}${s.newBest ? ', a new best' : ''}`)}">
-      <div class="score-main"><span class="kicker">${s.daily ? `Daily Forge · ${esc(s.daily)}` : 'Score'}</span><b class="score-num">${s.score.toLocaleString('en-US')}</b>${s.newBest ? `<span class="new-best">${svg('crown', 16)} New best</span>` : ''}</div>
-      ${s.grades.length ? `<div class="grade-strip" aria-label="Room grades ${esc(s.grades.map((g) => g.grade).join(' '))}">${s.grades.map((g) => `<i data-g="${g.grade}" title="${esc(`${g.room}: ${g.grade}, ${g.time.toFixed(1)} s of par ${g.par}`)}">${g.grade}</i>`).join('')}</div>` : ''}
+      <div class="score-main"><span class="kicker">${s.daily ? `Daily Forge · ${esc(s.daily)}` : 'Score'}</span><b class="score-num"><span class="score-text">${s.score.toLocaleString('en-US')}</span></b>${s.newBest ? `<span class="new-best">${svg('crown', 16)} New best</span>` : ''}</div>
+      ${s.grades.length ? `<div class="grade-strip" aria-label="Room grades ${esc(s.grades.map((g) => g.grade).join(' '))}">${s.grades.map((g, i) => `<i data-g="${g.grade}" style="--i:${i}" title="${esc(`${g.room}: ${g.grade}, ${g.time.toFixed(1)} s of par ${g.par}`)}">${g.grade}</i>`).join('')}</div>` : ''}
       <button class="btn small share" data-act="share" aria-label="Copy the result to the clipboard">${svg('link', 16)}<span>Copy result</span></button>
       <ul class="score-lines">${s.scoreLines.filter((l) => l.points !== 0).map((l) => `<li><span>${esc(l.label)}</span><b>${l.points > 0 ? '+' : ''}${l.points.toLocaleString('en-US')}</b></li>`).join('')}</ul>
     </div>
@@ -924,9 +1039,9 @@ function summaryHtml(view: View): string {
         ${tile('title', 'home', 'Title')}
       </div>
     </div>
-    <div class="reward-line">${chip(icon('currency-scrap', 22), `+${s.scrap}`, `${s.scrap} scrap earned`, 'cur scrap big')}${currencies(view.save, null)}</div>
+    <div class="reward-line"><span class="earned">${chip(icon('currency-scrap', 24), `+${s.scrap}`, `${s.scrap} scrap earned`, 'cur scrap big')}<span class="muted small">scrap earned</span></span>${currencies(view.save, null)}</div>
     <p class="idea" title="${esc(s.line)}">${svg('spark', 18)} ${esc(s.kind === 'death' ? s.tip : s.idea)}</p>
-    <details class="run-details"><summary>${svg('info', 16)} Run</summary>
+    <details class="run-details"><summary>${svg('info', 16)} Run details</summary>
     <div class="summary-grid">
       <section><h3>${svg('wrench', 18)} ${esc(s.archetype)}</h3><ul class="plain parts">${s.components.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
         ${s.decisions.length ? `<p class="muted small">${s.decisions.map(esc).join(' · ')}</p>` : ''}</section>
@@ -934,7 +1049,7 @@ function summaryHtml(view: View): string {
       <section><h3>${svg('heart', 18)} Taken</h3>${bars(s.taken)}</section>
       <section><h3>${svg('impact', 18)} Dealt</h3>${bars(s.dealt)}</section>
     </div>
-    <p class="muted small">${svg('hash', 14)} ${s.seed} · ${svg('flame', 14)} ${s.heat}${s.assist ? ` · ${svg('assist', 14)}` : ''}</p>
+    <p class="muted small seed-line">${svg('hash', 14)} ${s.seed} · ${svg('flame', 14)} ${s.heat}${s.assist ? ` · ${svg('assist', 14)}` : ''}</p>
     </details>
   </div>`
 }

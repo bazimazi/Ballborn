@@ -33,6 +33,9 @@ interface Ghost { x: number; y: number; r: number; life: number; max: number; co
 interface Scorch { x: number; y: number; r: number; life: number }
 interface Coin { x: number; y: number; t: number; delay: number; kind: 'cinder' | 'heal' }
 interface Timed { at: number; run: () => void }
+/** A short-lived light in world space: blasts, hits, and breaks light up the room around them. */
+export interface Flare { x: number; y: number; r: number; color: string; life: number; max: number; a: number }
+interface Ray { x: number; y: number; angle: number; len: number; width: number; life: number; max: number; color: string }
 
 const HOT = ['#fff4d6', '#ffd58a', '#ffb15a', '#ff7a32']
 const EASE_BACK = (t: number): number => {
@@ -67,6 +70,11 @@ export class Juice {
   squashNy = -1
   /** The ball broke: it is drawn as debris, not a ball. */
   shattered = false
+  /** Impact frame, 0..1: a one-beat high-contrast flash on the biggest moments. */
+  impact = 0
+  private impactCool = 0
+  flares: Flare[] = []
+  private rays: Ray[] = []
   private slowLeft = 0
   private slowScale = 1
   private rng = cosmeticRng()
@@ -101,6 +109,9 @@ export class Juice {
     this.scorches = []
     this.coins = []
     this.timed = []
+    this.flares = []
+    this.rays = []
+    this.impact = 0
     this.seen.clear()
     this.spawnOrder = 0
     this.roomStart = this.time
@@ -229,6 +240,8 @@ export class Juice {
         if (this.settings.motion && e.clean) this.zoomPunch = Math.min(0.08, this.zoomPunch + 0.01 + 0.02 * Math.min(1, p))
         this.squashBall(e.nx, e.ny, 0.16 + 0.14 * Math.min(1, p))
         if (e.dealt > 60) this.hitstop(clamp(e.dealt / 1000, 0.06, 0.1))
+        this.flare(e.x, e.y, 90 + 140 * Math.min(1, p), e.crit ? '#ffd27a' : '#ffb070', 0.22, 0.9)
+        if (e.dealt > 140 && !e.blocked) this.impactFrame(0.8)
         return
       }
       case 'kill': {
@@ -255,6 +268,9 @@ export class Juice {
         this.waves.push({ x: e.x, y: e.y, r0: e.r, r1: e.r * 3.4, life: 0.32, max: 0.32, color: e.accent, width: 6 })
         this.stars.push({ x: e.x, y: e.y, size: e.r * 2.6, life: 0.12, max: 0.12, color: '#fff6ea', angle: this.rng() * Math.PI })
         this.scorch(e.x, e.y, e.r * 1.3)
+        this.flare(e.x, e.y, e.r * 9, e.accent, 0.4)
+        this.burstRays(e.x, e.y, e.elite ? 10 : 6, e.r * 4.2, e.accent)
+        if (e.elite) this.impactFrame(1)
         this.addTrauma(e.elite ? 0.45 : 0.28)
         if (this.settings.motion) this.zoomPunch = Math.min(0.09, this.zoomPunch + (e.elite ? 0.05 : 0.03))
         this.hitstop(e.elite ? 0.11 : 0.065)
@@ -326,6 +342,7 @@ export class Juice {
           this.puffs.push({ x: e.x + side * this.r(0, 30), y: e.y - 4, vx: side * this.r(120, 320), vy: this.r(-60, -10), r: this.r(6, 12), grow: 40, life: this.r(0.5, 0.8), max: 0.8, color: '#8d7f70', alpha: 0.45 })
         }
         this.debris(e.x, e.y, 6, '#6a5c4e')
+        this.flare(e.x, e.y - 20, e.radius * 2.2, '#ffd9a8', 0.4)
         this.addTrauma(0.5)
         this.hitstop(0.08)
         return
@@ -339,17 +356,26 @@ export class Juice {
       case 'rivet':
         this.debris(e.x, e.y, 8, '#ffd15c')
         this.waves.push({ x: e.x, y: e.y, r0: 12, r1: 80, life: 0.3, max: 0.3, color: '#ffd15c', width: 6 })
+        this.flare(e.x, e.y, 260, '#ffd15c', 0.45)
+        this.burstRays(e.x, e.y, 8, 120, '#ffe7a0')
+        this.impactFrame(0.7)
         this.addTrauma(0.35)
         this.hitstop(0.09)
         return
       case 'boss-phase':
         this.waves.push({ x: e.x, y: e.y, r0: 60, r1: 320, life: 0.5, max: 0.5, color: '#ffb15a', width: 10 })
         this.debris(e.x, e.y - 20, 14, '#5a534c')
+        this.flare(e.x, e.y, 520, '#ff9a4a', 0.8)
+        this.burstRays(e.x, e.y, 14, 340, '#ffc27a', 0.45)
+        this.impactFrame(1)
         this.addTrauma(0.6)
         this.hitstop(0.16)
         if (this.settings.motion) this.zoomPunch = Math.min(0.1, this.zoomPunch + 0.06)
         return
       case 'boss-down':
+        this.impactFrame(1)
+        this.flare(e.x, e.y, 700, '#fff1d6', 1.4)
+        this.burstRays(e.x, e.y, 20, 520, '#fff1d6', 0.9)
         this.hitstop(0.22)
         this.slowMo(1.5, 0.3)
         this.addTrauma(0.8)
@@ -383,7 +409,62 @@ export class Juice {
         return
       case 'die':
         this.shatter(e.x, e.y)
+        this.flare(e.x, e.y, 320, '#ffb070', 0.7)
+        this.impactFrame(0.9)
         return
+      case 'plow': {
+        // Carrying through a wreck: a cone of sparks and air ahead of the ball, and a hard kick forward.
+        const len = Math.hypot(e.vx, e.vy) || 1
+        const ux = e.vx / len
+        const uy = e.vy / len
+        for (let i = 0; i < this.n(16); i++) {
+          const a = Math.atan2(uy, ux) + this.r(-0.55, 0.55)
+          const sp = this.r(380, 900)
+          this.streaks.push({ x: e.x, y: e.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: this.r(0.16, 0.32), max: 0.32, color: this.pick(HOT), width: this.r(2, 3.6), gravity: 700 })
+        }
+        this.waves.push({ x: e.x, y: e.y, r0: 10, r1: 70, life: 0.2, max: 0.2, color: '#fff6ea', width: 5 })
+        this.kick(ux, uy, 9)
+        if (this.settings.motion) this.zoomPunch = Math.min(0.1, this.zoomPunch + 0.025)
+        this.flare(e.x, e.y, 220, '#ffd9a8', 0.3)
+        return
+      }
+      case 'wallkick':
+        for (let i = 0; i < this.n(7); i++) {
+          this.puffs.push({ x: e.x, y: e.y + this.r(-10, 10), vx: e.nx * this.r(30, 120), vy: this.r(-60, 30), r: this.r(4, 8), grow: 30, life: this.r(0.35, 0.55), max: 0.55, color: '#9a8b7b', alpha: 0.42 })
+        }
+        this.waves.push({ x: e.x, y: e.y, r0: 6, r1: 40, life: 0.2, max: 0.2, color: '#fff1d6', width: 3 })
+        this.squashBall(e.nx, 0, 0.26)
+        this.kick(e.nx, -0.4, 5)
+        return
+    }
+  }
+
+  /** The room is clear: the gate blows open with light. */
+  gateOpen(x: number, y: number): void {
+    this.flare(x, y, 520, '#ffcf8a', 1.1)
+    this.burstRays(x, y, 14, 260, '#ffe2b0', 0.7)
+    this.waves.push({ x, y, r0: 30, r1: 260, life: 0.6, max: 0.6, color: '#ffd9a8', width: 8 })
+    this.waves.push({ x, y, r0: 10, r1: 150, life: 0.45, max: 0.45, color: '#fff6ea', width: 4 })
+    if (this.settings.motion) this.zoomPunch = Math.min(0.1, this.zoomPunch + 0.04)
+    this.addTrauma(0.25)
+  }
+
+  private flare(x: number, y: number, r: number, color: string, life: number, a = 1): void {
+    this.flares.push({ x, y, r, color, life, max: life, a })
+    if (this.flares.length > 48) this.flares.shift()
+  }
+
+  /** The biggest beats get an impact frame; they are rate limited so they stay special. */
+  private impactFrame(strength: number): void {
+    if (!this.settings.motion || this.time < this.impactCool) return
+    this.impact = Math.max(this.impact, strength)
+    this.impactCool = this.time + 0.7
+  }
+
+  /** Light rays bursting out of a point (kills, rivets, the Colossus going down). */
+  private burstRays(x: number, y: number, n: number, len: number, color: string, life = 0.28): void {
+    for (let i = 0; i < this.n(n); i++) {
+      this.rays.push({ x, y, angle: this.rng() * Math.PI * 2, len: len * this.r(0.6, 1.2), width: this.r(3, 9), life, max: life, color })
     }
   }
 
@@ -416,6 +497,7 @@ export class Juice {
       this.streaks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 60, life: this.r(0.2, 0.5), max: 0.5, color: this.pick(HOT), width: this.r(2, 3.5), gravity: 900 })
     }
     this.scorch(x, y, radius * 0.5)
+    this.flare(x, y, radius * 3.2, '#ff8a3c', 0.55)
     this.addTrauma(0.32)
   }
 
@@ -529,6 +611,9 @@ export class Juice {
       p.r += p.grow * dt
     }
     for (const p of this.waves) p.life -= dt
+    for (const p of this.flares) p.life -= dt
+    for (const p of this.rays) p.life -= dt
+    this.impact = Math.max(0, this.impact - realDt * 9)
     for (const p of this.stars) p.life -= dt
     for (const p of this.ghosts) p.life -= dt
     for (const p of this.scorches) p.life -= dt
@@ -540,6 +625,8 @@ export class Juice {
     this.streaks = this.streaks.filter((p) => p.life > 0)
     this.puffs = this.puffs.filter((p) => p.life > 0)
     this.waves = this.waves.filter((p) => p.life > 0)
+    this.flares = this.flares.filter((p) => p.life > 0)
+    this.rays = this.rays.filter((p) => p.life > 0)
     this.stars = this.stars.filter((p) => p.life > 0)
     this.ghosts = this.ghosts.filter((p) => p.life > 0)
     this.scorches = this.scorches.filter((p) => p.life > 0)
@@ -717,6 +804,23 @@ export class Juice {
       ctx.moveTo(p.x, p.y)
       ctx.lineTo(p.x - p.vx * 0.028, p.y - p.vy * 0.028)
       ctx.stroke()
+    }
+    for (const ray of this.rays) {
+      const t = ray.life / ray.max
+      const e = 1 - t
+      const r0 = ray.len * 0.15 + ray.len * 0.5 * e
+      const r1 = r0 + ray.len * (0.4 + 0.6 * t)
+      const half = ray.width * t
+      const ca = Math.cos(ray.angle)
+      const sa = Math.sin(ray.angle)
+      ctx.globalAlpha = t * 0.7
+      ctx.fillStyle = ray.color
+      ctx.beginPath()
+      ctx.moveTo(ray.x + ca * r0 - sa * half, ray.y + sa * r0 + ca * half)
+      ctx.lineTo(ray.x + ca * r1, ray.y + sa * r1)
+      ctx.lineTo(ray.x + ca * r0 + sa * half, ray.y + sa * r0 - ca * half)
+      ctx.closePath()
+      ctx.fill()
     }
     for (const w of this.waves) {
       const t = 1 - w.life / w.max

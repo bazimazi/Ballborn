@@ -136,7 +136,7 @@ try {
   check('tutorial ends on the route map', await waitScreen(['map']))
   await page.waitForTimeout(300)
   await shot('04-map')
-  check('map draws route edges', (await page.locator('.map svg line').count()) > 5)
+  check('map draws route edges', (await page.locator('.map svg path').count()) > 5)
 
   // Run the route to the end, visiting whatever the map offers.
   const seen = new Set()
@@ -180,7 +180,7 @@ try {
     await page.waitForTimeout(150)
   }
   check('a full route reaches victory', (await screen()) === 'victory')
-  await page.waitForTimeout(300)
+  await page.waitForTimeout(2600)
   await shot('10-victory')
   check('victory summary shows route and damage breakdown', (await page.locator('.summary-grid section').count()) >= 4)
 
@@ -213,7 +213,7 @@ try {
       s.hurt(50, 'projectile')
     })
     check('death reaches the summary', await waitScreen(['death']))
-    await page.waitForTimeout(300)
+    await page.waitForTimeout(2600)
     await shot('11-death')
     check('death summary names the cause', (await page.locator('.summary .cause').count()) > 0)
   }

@@ -32,7 +32,7 @@ Open [http://127.0.0.1:5173/](http://127.0.0.1:5173/).
 | Action | Keyboard | Controller |
 | --- | --- | --- |
 | Roll | A / D (rebindable) or arrows | Left stick or d-pad |
-| Hop (hold in the air to float) | W (rebindable), Up, or Space | A |
+| Hop (hold in the air to float; press against a wall in the air to wall kick) | W (rebindable), Up, or Space | A |
 | Ability | Left Shift (rebindable), F, or right click on the game | B, X, or RB |
 | Build sheet (pauses) | Tab | Back |
 | Pause | Esc | Start |
@@ -47,7 +47,9 @@ Rebinding a key that is already in use swaps the two bindings; Esc cancels a reb
 
 ## How the ball fights
 
-Speed is the weapon. The ring around the ball shows your speed. **A ram at more than 55% of your top speed, or one that breaks the construct, is clean: it costs you nothing.** Slower bumps glance and cost recoil. Hits from above get past shields. Floating numbers say `ARMOR`, `BLOCK`, or `glance` when a hit was reduced, and why.
+Speed is the weapon. The ring around the ball shows your speed. **A ram at more than 55% of your top speed, or one that breaks the construct, is clean: it costs you nothing.** Slower bumps glance and cost recoil. A clean ram that breaks a construct **plows through** the wreck: the ball keeps most of its speed (less through heavy constructs) instead of bouncing back, so a fast ball can chain through a line. Every ram kill also winds the ability cooldown back by almost half.
+
+In the air, hop just as the ball touches a wall to **wall kick**: it springs away from the wall at a good share of top speed with most of a full hop. Holding hop while sliding into a wall never kicks on its own, so floating stays safe. Hits from above get past shields. Floating numbers say `ARMOR`, `BLOCK`, or `glance` when a hit was reduced, and why.
 
 Heavier balls start slower, hop shorter, and hit harder. Lighter balls snap to speed and can float, but their rams are soft. Slag is survivable: it spits the ball back up once per touch, for a cost.
 
@@ -108,6 +110,6 @@ Menus are keyboard and controller navigable with visible focus, and major state 
 
 ## Stack
 
-TypeScript, Vite, Canvas 2D, and the Web Audio API. No game engine. Parts, rooms, enemies, synergies, events, heats, and damage rules are data; `src/content.ts` validates them. Fonts load from Google Fonts with system fallbacks; the game needs no other network access. All art is drawn in code and all sound is synthesized. The music is an adaptive score (`src/music.ts`): a lookahead sequencer on the Web Audio clock plays one loop per state (menu, rooms, the Colossus) in D minor, and layers (bass, kick, an anvil backbeat, hats, an arpeggio) enter with the room's intensity: constructs alive, clean-ram speed, combo, and boss phase. Kill chimes climb the same scale; big hits briefly duck the music; a generated hall reverb and a bus compressor glue the mix.
+TypeScript, Vite, Canvas 2D, and the Web Audio API. No game engine. Parts, rooms, enemies, synergies, events, heats, and damage rules are data; `src/content.ts` validates them. Fonts load from Google Fonts with system fallbacks; the game needs no other network access. All art is drawn in code and all sound is synthesized. The world view runs a small post stack (`src/post.ts`): a quarter-resolution light map (work lamps, slag, the gate, bolts, blasts, and the ball) multiplies onto the environment before the actors are drawn, so rooms are moody while constructs and the ball stay fully readable; then a filter-free bloom (cascaded downsampling with a power threshold) and a teal-and-ember colour grade. High contrast turns the stack off, and a slow device drops bloom first. The biggest beats (elite kills, rivets, phase changes, the ball breaking) get a rate-limited impact frame, which the screen-flash setting also controls. The music is an adaptive score (`src/music.ts`): a lookahead sequencer on the Web Audio clock plays one loop per state (menu, rooms, the Colossus) in D minor, and layers (bass, kick, an anvil backbeat, hats, an arpeggio) enter with the room's intensity: constructs alive, clean-ram speed, combo, and boss phase. Kill chimes climb the same scale; big hits briefly duck the music; a generated hall reverb and a bus compressor glue the mix.
 
 See `docs/implementation-plan.md` for what changed and what is still open, `docs/design-and-tuning.md` for the rules and numbers, and `docs/validation-report.md` for measured results.

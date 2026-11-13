@@ -249,6 +249,24 @@ export class AudioBus {
     else this.tone(180, t, 0.12, 'sawtooth', 0.06, d, P_HIT)
   }
 
+  /** The ball tore through a wreck and kept going: an airy rip with a low thump under it. */
+  plow(speed: number): void {
+    if (!this.ctx || !this.sfxGain) return
+    const t = this.ctx.currentTime
+    const k = Math.min(1, speed / 1200)
+    this.noiseBurst(t, 0.18, 900 + 900 * k, 0.1 + 0.06 * k, this.sfxGain, P_HIT)
+    this.tone(90, t, 0.12, 'sine', 0.12, this.sfxGain, P_HIT)
+  }
+
+  /** A kick off a wall: a tight knock and a short rising lift. */
+  wallKick(): void {
+    if (!this.ctx || !this.sfxGain) return
+    const t = this.ctx.currentTime
+    this.noiseBurst(t, 0.05, 1400, 0.08, this.sfxGain, P_HIT)
+    this.tone(330, t, 0.06, 'triangle', 0.06, this.sfxGain, P_LOW)
+    this.tone(495, t + 0.04, 0.08, 'triangle', 0.05, this.sfxGain, P_LOW)
+  }
+
   /** The ball just reached clean-ram speed: a short rising chirp. */
   armed(): void {
     if (!this.ctx || !this.sfxGain) return

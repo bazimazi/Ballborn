@@ -14,7 +14,7 @@
     {
       "name": "ball moved under keyboard input",
       "ok": true,
-      "detail": "x=1586"
+      "detail": "x=1590"
     },
     {
       "name": "tutorial clear reaches the reward screen",
@@ -79,12 +79,17 @@
     {
       "name": "controller d-pad moves menu focus",
       "ok": true,
-      "detail": "Launch run -> Daily Forge2026-11-13 · not yet run"
+      "detail": "Launch runA fresh route to the Colossus -> Daily Forge2026-11-13 · not yet runToday"
     },
     {
       "name": "controller A activates the focused button",
       "ok": true,
       "detail": "map"
+    },
+    {
+      "name": "starting over a saved run asks first",
+      "ok": true,
+      "detail": ""
     },
     {
       "name": "focus loss pauses the room",
@@ -99,12 +104,12 @@
     {
       "name": "touch stick rolls the ball",
       "ok": true,
-      "detail": "150 -> 822"
+      "detail": "150 -> 838"
     },
     {
       "name": "touch hop button hops",
       "ok": true,
-      "detail": "vy=-617"
+      "detail": "vy=-600"
     },
     {
       "name": "touch pause button pauses",
@@ -124,7 +129,7 @@
     {
       "name": "lab soak (15 simulated minutes) keeps entity counts bounded",
       "ok": true,
-      "detail": "{\"minute\":14,\"enemies\":4,\"particles\":8,\"bullets\":2,\"pickups\":0,\"floaters\":0}"
+      "detail": "{\"minute\":14,\"enemies\":4,\"particles\":8,\"bullets\":1,\"pickups\":0,\"floaters\":0}"
     },
     {
       "name": "no console errors",
@@ -135,39 +140,39 @@
   "errors": [],
   "perf": {
     "tutorialRoll": {
-      "frames": 276,
+      "frames": 254,
       "p50": 16.699999999999818,
-      "p95": 17.100000000000364,
-      "p99": 50,
-      "max": 328.4000000014903
+      "p95": 17.399999999999636,
+      "p99": 66.90000000000009,
+      "max": 466.5999999999999
     },
     "labRealtime60s": {
       "frames": 3601,
       "p50": 16.69999999999709,
-      "p95": 17,
-      "p99": 17.80000000000291,
-      "max": 27.399999999997817,
-      "particles": 11,
-      "enemies": 3,
-      "voices": 12
+      "p95": 16.900000000001455,
+      "p99": 17.5,
+      "max": 24.099999999998545,
+      "particles": 0,
+      "enemies": 4,
+      "voices": 18
     },
     "frameCostMs": {
       "ordinary": {
         "frames": 600,
-        "p50": 0.7000000029802322,
-        "p95": 1.1000000014901161,
-        "p99": 1.3999999985098839,
-        "max": 2.100000001490116
+        "p50": 1.3000000044703484,
+        "p95": 2,
+        "p99": 2.399999998509884,
+        "max": 3.0999999940395355
       },
       "stress": {
         "frames": 900,
-        "p50": 1,
-        "p95": 1.3999999985098839,
-        "p99": 1.7000000029802322,
-        "max": 2.8000000044703484
+        "p50": 1.8000000044703484,
+        "p95": 2.5,
+        "p99": 2.8000000044703484,
+        "max": 3.2000000029802322
       },
-      "stressEntities": 16,
-      "stressParticles": 35
+      "stressEntities": 14,
+      "stressParticles": 29
     }
   },
   "layout": [
@@ -314,55 +319,55 @@
   ],
   "soak": {
     "simMinutes": 15,
-    "wallSeconds": 0.2695,
-    "perTickMs": 0.0024953703703703705,
-    "heapDeltaMB": 8.64318,
+    "wallSeconds": 0.27609999999403956,
+    "perTickMs": 0.002556481481426292,
+    "heapDeltaMB": 9.77252,
     "samples": [
       {
         "minute": 0,
-        "enemies": 15,
-        "particles": 46,
-        "bullets": 3,
-        "pickups": 4,
+        "enemies": 14,
+        "particles": 39,
+        "bullets": 1,
+        "pickups": 7,
         "floaters": 0
       },
       {
         "minute": 1,
-        "enemies": 4,
-        "particles": 12,
+        "enemies": 5,
+        "particles": 10,
         "bullets": 1,
-        "pickups": 1,
+        "pickups": 0,
         "floaters": 0
       },
       {
         "minute": 2,
-        "enemies": 4,
+        "enemies": 5,
         "particles": 8,
-        "bullets": 2,
+        "bullets": 1,
         "pickups": 0,
         "floaters": 0
       },
       {
         "minute": 3,
         "enemies": 4,
-        "particles": 8,
+        "particles": 9,
         "bullets": 1,
-        "pickups": 3,
+        "pickups": 0,
         "floaters": 0
       },
       {
         "minute": 4,
-        "enemies": 4,
+        "enemies": 3,
         "particles": 8,
-        "bullets": 2,
-        "pickups": 0,
+        "bullets": 1,
+        "pickups": 1,
         "floaters": 0
       },
       {
         "minute": 5,
         "enemies": 4,
-        "particles": 8,
-        "bullets": 2,
+        "particles": 14,
+        "bullets": 1,
         "pickups": 0,
         "floaters": 0
       },
@@ -371,70 +376,70 @@
         "enemies": 4,
         "particles": 8,
         "bullets": 1,
-        "pickups": 0,
+        "pickups": 1,
         "floaters": 0
       },
       {
         "minute": 7,
         "enemies": 4,
-        "particles": 8,
+        "particles": 12,
         "bullets": 1,
         "pickups": 0,
         "floaters": 0
       },
       {
         "minute": 8,
-        "enemies": 3,
+        "enemies": 4,
         "particles": 8,
-        "bullets": 0,
-        "pickups": 1,
+        "bullets": 1,
+        "pickups": 0,
         "floaters": 0
       },
       {
         "minute": 9,
         "enemies": 4,
-        "particles": 8,
-        "bullets": 0,
-        "pickups": 1,
+        "particles": 12,
+        "bullets": 2,
+        "pickups": 2,
         "floaters": 0
       },
       {
         "minute": 10,
-        "enemies": 4,
-        "particles": 15,
-        "bullets": 2,
+        "enemies": 3,
+        "particles": 42,
+        "bullets": 1,
         "pickups": 0,
         "floaters": 1
       },
       {
         "minute": 11,
-        "enemies": 4,
-        "particles": 8,
-        "bullets": 1,
-        "pickups": 1,
+        "enemies": 3,
+        "particles": 11,
+        "bullets": 2,
+        "pickups": 0,
         "floaters": 0
       },
       {
         "minute": 12,
         "enemies": 4,
         "particles": 8,
-        "bullets": 2,
+        "bullets": 1,
         "pickups": 0,
         "floaters": 0
       },
       {
         "minute": 13,
         "enemies": 4,
-        "particles": 8,
+        "particles": 18,
         "bullets": 1,
         "pickups": 0,
-        "floaters": 0
+        "floaters": 1
       },
       {
         "minute": 14,
         "enemies": 4,
         "particles": 8,
-        "bullets": 2,
+        "bullets": 1,
         "pickups": 0,
         "floaters": 0
       }

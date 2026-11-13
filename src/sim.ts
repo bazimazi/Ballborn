@@ -188,6 +188,10 @@ export type FxEvent =
   | { type: 'kill'; x: number; y: number; r: number; color: string; accent: string; elite: boolean; vx: number; vy: number }
   | { type: 'bounce'; x: number; y: number; nx: number; ny: number; speed: number }
   | { type: 'hop'; x: number; y: number }
+  /** A hop off a wall: nx is the direction the ball leaves in. */
+  | { type: 'wallkick'; x: number; y: number; nx: number }
+  /** A killing ram that carried on through the wreck instead of bouncing back. */
+  | { type: 'plow'; x: number; y: number; vx: number; vy: number; speed: number }
   | { type: 'spring'; x: number; y: number }
   | { type: 'hurt'; x: number; y: number; amount: number; source: DamageSource }
   | { type: 'ability'; kind: AbilityKind; x: number; y: number; vx: number; vy: number }
@@ -325,6 +329,11 @@ export class Simulation implements EffectApi {
   groundTime = 0
   coyote = 0
   jumpBuffer = 0
+  /** Seconds since the ball last touched a wall in the air, and which way that wall faces. */
+  wallTime = 0
+  wallNx = 0
+  /** A hop pressed in the air, waiting a moment for a wall to kick off. */
+  wallBuffer = 0
   facing = 1
   hurtLock = 0
   tick = 0
@@ -518,8 +527,12 @@ export class Simulation implements EffectApi {
     }
     // A hop pressed in the air waits for the next floor contact while the button is held,
     // so a bouncy ball mid-bounce still hops the moment it touches down.
-    if (input.hopPressed) this.jumpBuffer = TUNE.jumpBuffer
-    else if (!(input.hopHeld && this.jumpBuffer > 0)) this.jumpBuffer = Math.max(0, this.jumpBuffer - dt)
+    if (input.hopPressed) {
+      this.jumpBuffer = TUNE.jumpBuffer
+      if (!this.grounded && this.coyote <= 0) this.wallBuffer = TUNE.jumpBuffer
+    } else if (!(input.hopHeld && this.jumpBuffer > 0)) this.jumpBuffer = Math.max(0, this.jumpBuffer - dt)
+    this.wallBuffer = Math.max(0, this.wallBuffer - (input.hopPressed ? 0 : dt))
+    this.wallTime = Math.max(0, this.wallTime - dt)
     if (input.abilityPressed) this.useAbility(input)
 
     let ix = input.x
@@ -652,6 +665,19 @@ export class Simulation implements EffectApi {
     }
     const vCap = cap * 1.5
     if (Math.abs(this.ball.vy) > vCap && this.boost <= 0) this.ball.vy = Math.sign(this.ball.vy) * vCap
+    // Wall kick: a fresh hop in the air, against (or just off) a wall, springs the ball away from it.
+    if (this.wallBuffer > 0 && this.wallTime > 0 && !this.grounded && this.coyote <= 0) {
+      const away = Math.max(Math.abs(this.ball.vx), cap * TUNE.wallKickSpeed)
+      this.ball.vx = this.wallNx * away
+      this.ball.vy = Math.min(this.ball.vy, hopVelocity(stats) * TUNE.wallKickHop)
+      this.wallBuffer = 0
+      this.wallTime = 0
+      this.jumpBuffer = 0
+      this.boost = Math.max(this.boost, 0.2)
+      this.facing = Math.sign(this.wallNx) || this.facing
+      this.burst(this.ball.x - this.wallNx * this.ball.r, this.ball.y, 6, '#efe7d6', 140)
+      this.emit({ type: 'wallkick', x: this.ball.x - this.wallNx * this.ball.r, y: this.ball.y, nx: this.wallNx })
+    }
     if (this.jumpBuffer > 0 && (this.grounded || this.coyote > 0)) {
       // Hopping off a spring is never weaker than the spring itself.
       const springV = this.groundKind === 'spring' ? -760 / Math.pow(stats.mass, 0.38) : 0
@@ -691,6 +717,10 @@ export class Simulation implements EffectApi {
           this.slamArmed = false
           this.slamShock(c.impactSpeed)
         } else if (this.slamArmed) this.slamArmed = false
+      }
+      if (Math.abs(c.nx) > 0.7 && Math.abs(c.ny) < 0.5) {
+        this.wallTime = TUNE.wallKickWindow
+        this.wallNx = Math.sign(c.nx)
       }
       if (c.impactSpeed > 120) {
         this.listeners.onBounceSfx?.(c.impactSpeed)
@@ -1080,6 +1110,9 @@ export class Simulation implements EffectApi {
       }
       if (rel >= -30) continue
       const closing = -rel
+      // Velocity before the collision response, so a killing ram can carry on through the wreck.
+      const bvx = this.ball.vx
+      const bvy = this.ball.vy
       const rest = stats.restitution
       const impulse = (-(1 + rest) * rel) / (1 / stats.mass + (e.pinned ? 0 : 1 / e.mass))
       this.ball.vx += (impulse * nx) / stats.mass
@@ -1097,14 +1130,25 @@ export class Simulation implements EffectApi {
         this.ball.vy += ny * (away - vn) * 0.45
       }
       e.hitCd = TUNE.enemyHitLock
+      const rvx = this.ball.vx - bvx
+      const rvy = this.ball.vy - bvy
       // Dash and burst phase protect the ball (contact, recoil, bolts); they never cancel the ram itself.
-      this.resolveHit(e, nx, ny, Math.max(closing, ballToward), ballToward)
+      const hit = this.resolveHit(e, nx, ny, Math.max(closing, ballToward), ballToward)
       if (this.done) return
+      if (hit.killed && !hit.blocked && hit.clean && !e.alive) {
+        // Plow through: undo the bounce, keep most of the run. Heavier wrecks drag more.
+        const keep = clamp(1 - (e.mass / Math.max(0.4, stats.mass)) * TUNE.plowDrag, TUNE.plowKeepMin, TUNE.plowKeepMax)
+        this.ball.vx -= rvx + bvx * (1 - keep)
+        this.ball.vy -= rvy + bvy * (1 - keep)
+        // A ram through a construct on the floor never digs the ball into the floor.
+        if (this.grounded && this.ball.vy > 0) this.ball.vy = 0
+        this.emit({ type: 'plow', x: e.x, y: e.y, vx: this.ball.vx, vy: this.ball.vy, speed: hypot(this.ball.vx, this.ball.vy) })
+      }
     }
     this.collideBoss()
   }
 
-  private resolveHit(e: LiveEnemy, nx: number, ny: number, closing: number, toward = closing): void {
+  private resolveHit(e: LiveEnemy, nx: number, ny: number, closing: number, toward = closing): { killed: boolean; blocked: boolean; clean: boolean } {
     const stats = this.effectiveStats()
     // Landing a slam on a construct spends it: no second shockwave on the next floor touch.
     if (ny < -0.45) this.slamArmed = false
@@ -1131,13 +1175,16 @@ export class Simulation implements EffectApi {
     const clean = !blocked && (killed || closing >= stats.maxSpeed * TUNE.cleanRamRatio)
     this.rams++
     if (clean) this.cleanRams++
+    const out = { killed, blocked, clean }
     this.fireEvent('onImpact', e.x, e.y, nx, ny, closing, e, dealt)
-    if (this.done) return
+    if (this.done) return out
     if (!clean) {
       const dirty = clamp(1 - dealt / 48, TUNE.minRecoil, 1)
       this.hurt(e.contact * stats.selfDamage * dirty * (blocked ? 0.4 : 1), 'recoil')
-      if (this.done) return
+      if (this.done) return out
     }
+    // A ram that breaks a construct winds the ability back up: aggression feeds itself.
+    if (killed) this.abilityCd *= TUNE.killCooldownKeep
     this.squash = 0.12
     this.emit({ type: 'hit', x: e.x + nx * e.r, y: e.y + ny * e.r, nx, ny, dealt, speed: closing, clean, crit, blocked, killed })
     this.listeners.onImpactSfx?.(closing, blocked ? 'block' : clean ? 'clean' : 'glance')
@@ -1155,6 +1202,7 @@ export class Simulation implements EffectApi {
     else if (clean && !killed && hpBefore > 0) this.floater(e.x, e.y - e.r - 18, 'CLEAN', '#8dffc0')
     // A killing ram already counts once through kill().
     if (dealt > 8 && !killed) this.addCombo()
+    return out
   }
 
   /**

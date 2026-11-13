@@ -11,6 +11,7 @@ import { FixedStepper } from './loop'
 import { dailyKey, dailySeed, GRADE_CINDERS, gradeRoom, gradeStrip, parTime, runScore } from './grade'
 import { selfCheckPhysics } from './physics'
 import { Juice } from './juice'
+import { Post } from './post'
 import { ballView, CardPreview, drawMenuScene, drawWorld, fitZoom, makeCamera, screenToWorld, updateCamera, viewRect, type Camera } from './render'
 import {
   banishOffer,
@@ -102,6 +103,7 @@ export class Game {
   summary: RunSummary | null = null
   cam: Camera = makeCamera()
   readonly juice = new Juice()
+  private readonly post = new Post()
   flash = 0
   hitstop = 0
   /** Room entry iris, 0 closed to 1 open. */
@@ -284,6 +286,8 @@ export class Game {
         drawWorld(this.ctx, this.sim, this.cam, w, h, {
           alpha, particles: s.particles, colorblind: s.colorblind, contrast: s.highContrast, flash: s.flashes ? this.flash : 0,
           motion: s.cameraMotion, juice, time: now / 1000, iris: s.cameraMotion ? this.iris : 1, outro, coinTarget: this.coinTarget(w, resized),
+          // Bloom is the first thing a struggling device gives up; lighting stays (it is one small canvas).
+          post: this.post, bloom: this.renderScale >= 0.75 ? 1 : 0, impact: s.flashes ? juice.impact : 0,
         })
       }
     } else {
@@ -294,6 +298,7 @@ export class Game {
       if (resized || !this.input.touchMode || this.menuAcc >= 1 / 31) {
         this.menuAcc = 0
         drawMenuScene(this.ctx, w, h, now / 1000, !s.cameraMotion, this.screen === 'title' ? 'title' : 'menu', juice)
+        if (!s.highContrast) this.post.grade(this.ctx, w, h, 0)
       }
     }
     // One-frame cues: play them once, even when the world is frozen and juice.update() does not run to clear them.
@@ -789,7 +794,14 @@ export class Game {
 
   private listeners(): SimListeners {
     return {
-      onFx: (e) => this.juice.onEvent(e),
+      onFx: (e) => {
+        this.juice.onEvent(e)
+        if (e.type === 'plow') this.audio.plow(e.speed)
+        else if (e.type === 'wallkick') {
+          this.audio.wallKick()
+          if (!this.lab) this.buzz(15)
+        }
+      },
       onDiscovery: (id) => this.onDiscovery(id),
       onToast: (text) => {
         if (text) this.toast(text)
@@ -888,6 +900,8 @@ export class Game {
   /** The last construct fell: a short slow-motion beat and a banner. */
   private onGateOpen(sim: Simulation): void {
     if (sim.room.type !== 'boss') this.juice.slowMo(0.5, 0.35)
+    const ex = sim.room.exit
+    this.juice.gateOpen(ex.x + ex.w / 2, ex.y + ex.h / 2)
     this.audio.clear()
     // The grade is decided when the gate opens, so the banner can say it now.
     if (this.run && !this.run.tutorial && !this.lab) {
@@ -1533,6 +1547,7 @@ ${currentBuild(run).archetype}`
     if (this.screen === 'lab' && !entering && this.labPanel && this.labPanel === this.lastLabPanel) this.screenEl.querySelector('.lab-drawer')?.classList.add('stay')
     this.lastLabPanel = this.screen === 'lab' ? this.labPanel : null
     if (this.screen === 'map') this.fitMap()
+    if (entering && (this.screen === 'death' || this.screen === 'victory')) this.countUpScore()
     this.screenEl.querySelectorAll<HTMLElement>(SCROLLERS).forEach((el, i) => {
       const at = scrollers[i]
       if (!at) return
@@ -1588,6 +1603,25 @@ ${currentBuild(run).archetype}`
     setTimeout(() => {
       if (this.touchRefreshQueued) run()
     }, 400)
+  }
+  /** The run score ticks up from zero once the summary lands; the final number is in the markup from the start. */
+  private countUpScore(): void {
+    const el = this.screenEl.querySelector<HTMLElement>('.score-num .score-text')
+    const to = this.summary?.score ?? 0
+    if (!el || to <= 0 || !this.save.settings.cameraMotion) return
+    const delay = 450
+    const dur = 1600
+    const start = performance.now() + delay
+    el.textContent = '0'
+    const step = (now: number): void => {
+      if (!el.isConnected) return
+      const t = Math.min(1, Math.max(0, (now - start) / dur))
+      // Fast at first, settling onto the final number.
+      const e = 1 - Math.pow(1 - t, 4)
+      el.textContent = Math.round(to * e).toLocaleString('en-US')
+      if (t < 1) requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
   }
   private lastLabPanel: View['labPanel'] = null
   private touchRefreshQueued = false
