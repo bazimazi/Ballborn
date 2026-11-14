@@ -22,8 +22,8 @@ export const ENEMIES: EnemyDef[] = deepFreeze([
     hp: 90, r: 20, mass: 1.4, speed: 110, contact: 12,
     color: '#8d97a6', accent: '#e7e1d4',
     shield: true, shieldBreak: 38,
-    codex: 'The plate faces you. Hits from the front skid off unless the impact is enormous, or comes down on the crown.',
-    question: 'Bounce over it, or bring enough mass and speed to fold the shield.',
+    codex: 'The plate faces you, and it turns slowly. Hits from the front skid off unless the impact is enormous. Come down on the crown and the guard drops.',
+    question: 'Hop it and hit the crown, then ram while the guard is down. Or hit it from behind before it turns. Or bring enough mass to fold the shield.',
   },
   {
     id: 'plate', name: 'Iron Plate', behavior: 'walk', shape: 'hex',
@@ -86,7 +86,8 @@ export const ENEMIES: EnemyDef[] = deepFreeze([
   {
     id: 'spark', name: 'Swarm Spark', behavior: 'fly', shape: 'spark',
     hp: 18, r: 11, mass: 0.35, speed: 160, contact: 6,
-    color: '#ffb15a', accent: '#fff4df',
+    // Redder than cinder loot (amber), so a swarm never reads as something to collect.
+    color: '#ff5d3a', accent: '#fff4df',
     flying: true,
     codex: 'A handful of cinders with wings. Alone they are nothing.',
     question: 'Chains, slams, and explosions are delighted. Hunting them one by one is a tax.',
@@ -100,10 +101,10 @@ export const ENEMIES: EnemyDef[] = deepFreeze([
   },
   {
     id: 'knight', name: 'Furnace Knight', behavior: 'walk', shape: 'knight',
-    hp: 250, r: 26, mass: 2.8, speed: 95, contact: 16,
+    hp: 200, r: 26, mass: 2.8, speed: 95, contact: 16,
     color: '#a84832', accent: '#ffd29a',
     shield: true, shieldBreak: 46, armorGate: 14, armorMul: 0.62,
-    codex: 'An elite of the foundry. Shield, armor, and a body that expects you to earn the hit.',
+    codex: 'An elite of the foundry. Shield, armor, and a body that expects you to earn the hit. A crown hit drops its guard.',
     question: 'Overhead hits and armor-breaking mass shine. A pure lightning build will scrape.',
   },
 ])

@@ -469,7 +469,8 @@ export function nearReactions(run: RunState, slot: Slot, id: string, save: SaveD
     const before = syn.requires.reduce((n, r) => n + Math.max(0, r.count - (now.tags[r.tag] ?? 0)), 0)
     if (missing === 1 && missing < before) {
       const need = syn.requires.find((r) => (next.tags[r.tag] ?? 0) < r.count)!
-      out.push(`${synergyLabel(syn, save)}: needs ${need.tag}`)
+      const name = save.discoveredSynergies.includes(syn.id) ? syn.name : 'Hidden reaction'
+      out.push(`${name}: one more ${need.tag} part`)
     }
   }
   return out.slice(0, 2)
@@ -510,7 +511,7 @@ function weighted<T extends { rarity: Rarity }>(rng: () => number, list: T[], bi
 }
 
 export function synergyLabel(s: SynergyDef, save: SaveData): string {
-  return save.discoveredSynergies.includes(s.id) ? s.name : `Unlisted reaction (${s.requires.map((r) => r.tag).join(' + ')})`
+  return save.discoveredSynergies.includes(s.id) ? s.name : `New reaction (${s.requires.map((r) => r.tag).join(' + ')})`
 }
 
 /** Before/after for fitting one component, using the same HP policy as the actual equip. */
@@ -608,11 +609,15 @@ export function freshSynergyHints(save: SaveData): { id: string; known: boolean;
 
 export function deathTip(run: RunState, cause: string): string {
   const build = currentBuild(run)
-  if (cause === 'lava' || cause === 'pit' || cause === 'geyser') return 'The slag only wins if you stay in it. A shorter hop needs an earlier jump, or a lighter core.'
+  if (cause === 'lava' || cause === 'pit' || cause === 'geyser') {
+    return build.stats.mass < 0.9
+      ? 'The slag only wins if you stay in it. A light ball floats: hold hop over the gap, and keep off the seam while the Colossus stamps.'
+      : 'The slag only wins if you stay in it. A shorter hop needs an earlier jump, or a lighter core.'
+  }
   if (cause === 'crusher') return 'Stamps telegraph their drop. If you are slow to start, begin moving before the shadow lands.'
   if (cause === 'projectile') return 'Shots are a build question. Dash through them, bounce them back at speed, or catch them.'
   if (cause === 'recoil') return 'Glancing rams cost you. Hit at over half your top speed and the ram is clean: no recoil at all.'
-  if (cause === 'boss') return 'The Colossus telegraphs the stamp in red. After it lands, it is stuck for a moment: that is the window.'
+  if (cause === 'boss') return 'Every Colossus attack is telegraphed: a red band for the stamp, chevrons on the floor for a shockwave (hop it). After each one the shutters open: that green ring is the window.'
   if (build.stats.mass * build.stats.impact < 1 && run.bestHit < 20) return 'Your hits were glancing. Mass or a crush impact would have changed the math.'
   if (build.stats.mass > 1.8 && cause === 'contact') return 'The heavy ball needs room to arrive. Do not trade hits while you are still slow.'
   if (run.abilityUses === 0) return 'The ability slot was quiet. It is a tool, not a tax.'

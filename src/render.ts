@@ -1,7 +1,7 @@
 import { art, coverRect, TITLE_BALL } from './assets'
 import { BIOME } from './data/meta'
 import { glowSprite, shade, withAlpha, type Juice } from './juice'
-import { AFFIXES, crusherPose, geyserPhase, type LiveEnemy, type Simulation } from './sim'
+import { AFFIXES, BOSS_RULES, crusherPose, FLOOR_Y, geyserPhase, SHOCK_H, type LiveEnemy, type Simulation } from './sim'
 import { ENEMY_MAP } from './data/enemies'
 import { TUNE } from './tune'
 import type { Stats, VisualDef } from './types'
@@ -81,14 +81,28 @@ export function updateCamera(cam: Camera, sim: Simulation, dt: number, viewW: nu
   const wantY = clamp(sim.ball.vy * 0.05, -30, 70)
   cam.lookX = (cam.lookX ?? wantX) + (wantX - (cam.lookX ?? wantX)) * (1 - Math.exp(-3 * dt))
   cam.lookY = (cam.lookY ?? wantY) + (wantY - (cam.lookY ?? wantY)) * (1 - Math.exp(-2 * dt))
+  const sp = hypot(sim.ball.vx, sim.ball.vy)
+  // Close enough that the ball and the constructs read as characters; it eases out with speed so a fast ball sees further.
+  const target = (motion ? clamp(1.3 - sp / 3800, 1.06, 1.3) : 1.18) * fitZoom(viewW, viewH)
+  cam.zoom += (target - cam.zoom) * (1 - Math.exp(-2.4 * dt))
   const lookX = b.x + cam.lookX
-  const lookY = b.y + cam.lookY - 30
+  let lookY = b.y + cam.lookY - 30
+  // Nearly every fight is on the floor, so the vertical framing hangs off the floor line, not the ball:
+  // at rest the floor sits about 130 px above the bottom edge (the bottom HUD rides on the slab), and
+  // while the ball is up on a ledge or a spring it stays above the bottom HUD (about 96 px) instead of
+  // sliding under it. The ball itself always stays clear of the top HUD and the bottom edge.
+  // Pads shrink on short screens (a landscape phone is ~390 px tall), where the world needs every row.
+  const z = cam.zoom
+  const restPad = Math.min(130, viewH * 0.18)
+  const airPad = Math.min(96, viewH * 0.135)
+  const topPad = Math.min(84, viewH * 0.12)
+  lookY = Math.min(lookY, FLOOR_Y - (viewH / 2 - restPad) / z)
+  lookY = Math.max(lookY, FLOOR_Y - (viewH / 2 - airPad) / z)
+  lookY = Math.min(lookY, b.y + (viewH / 2 - topPad) / z)
+  lookY = Math.max(lookY, b.y - (viewH / 2 - Math.min(70, viewH * 0.1)) / z)
   const k = 1 - Math.exp(-5.5 * dt)
   cam.x += (lookX - cam.x) * k
   cam.y += (lookY - cam.y) * k
-  const sp = hypot(sim.ball.vx, sim.ball.vy)
-  const target = (motion ? clamp(1.13 - sp / 4600, 0.94, 1.15) : 1.06) * fitZoom(viewW, viewH)
-  cam.zoom += (target - cam.zoom) * (1 - Math.exp(-2.4 * dt))
   const halfW = viewW / (2 * cam.zoom)
   const halfH = viewH / (2 * cam.zoom)
   const padW = edgePad / cam.zoom
@@ -176,6 +190,7 @@ function interpolateTicks(sim: Simulation, alpha: number): void {
   lerpStash.length = 0
   for (const e of sim.enemies) lerpList.push(e)
   for (const b of sim.bullets) lerpList.push(b)
+  for (const w of sim.shocks) lerpList.push(w)
   for (const p of sim.pickups) lerpList.push(p)
   if (sim.boss) {
     lerpList.push(sim.boss)
@@ -295,6 +310,7 @@ function drawWorldAt(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camera
   drawGate(ctx, sim, o)
   for (const p of sim.pickups) drawPickup(ctx, p.x, p.y, p.kind, sim.time, p.life, o.contrast)
   if (sim.boss) drawBoss(ctx, sim, o)
+  drawShocks(ctx, sim, o)
   for (const e of sim.enemies) if (e.alive) drawEnemy(ctx, e, sim, o)
   for (const b of sim.bullets) drawBullet(ctx, b, o.contrast)
   drawSimParticles(ctx, sim, o)
@@ -352,12 +368,15 @@ function gatherLights(sim: Simulation, o: DrawOptions, light: LightFn): void {
   if (boss && boss.alive) {
     light(boss.x, boss.y - 10, boss.phase > 1 ? 420 : 260, '#ff8a3c', boss.phase > 1 ? 0.9 : 0.5)
     for (const r of boss.rivets) if (r.alive) light(r.x, r.y, 120, '#ffd15c', 0.6)
+    if (boss.attack === 'wave') light(boss.x - boss.r, FLOOR_Y - 10, 260, '#ff8a3c', 0.8)
   }
+  for (const w of sim.shocks) light(w.x, w.y - 16, 220, '#ffb15a', 0.95)
   for (const f of o.juice.flares) light(f.x, f.y, f.r, f.color, f.a * (f.life / f.max))
   if (!o.juice.shattered && !sim.done) {
     const b = ballView(sim, o.alpha)
     const ratio = clamp(hypot(sim.ball.vx, sim.ball.vy) / Math.max(1, sim.stats.maxSpeed), 0, 1.4)
-    light(b.x, b.y, 200 + ratio * 120, sim.build.visual.trail, 0.4 + 0.35 * ratio)
+    const hot = sim.overdrive
+    light(b.x, b.y, (hot ? 300 : 200) + ratio * 120, hot ? '#ffb347' : sim.build.visual.trail, hot ? 0.95 : 0.4 + 0.35 * ratio)
     light(b.x, b.y, 90, '#fff1df', 0.35)
   }
 }
@@ -1415,7 +1434,15 @@ function drawEnemy(ctx: CanvasRenderingContext2D, e: LiveEnemy, sim: Simulation,
   // Squash on hit, a slow breath at rest.
   const hf = clamp(e.hitFlash / 0.08, 0, 1)
   const breath = 1 + Math.sin(time * 2.4 + e.uid) * 0.025
-  ctx.scale(pop * (1 + 0.3 * hf) * breath, pop * (1 - 0.24 * hf) / breath)
+  // Walkers squash on each footfall (the low point of the bob), feet kept on the floor.
+  const footfall = moving && !e.flying && o.motion ? Math.pow(1 - Math.abs(Math.sin(time * 9 + e.uid)), 4) * 0.1 : 0
+  // Anticipation: a shooter rears up before it fires; a hound crouches lower and lower, then stretches into the charge.
+  const rear = e.shot && e.windup > 0 && o.motion ? (1 - clamp(e.windup / 0.35, 0, 1)) * 0.12 : 0
+  const crouch = e.shape === 'hound' && o.motion ? (e.windup > 0 ? (1 - clamp(e.windup / 0.62, 0, 1)) * 0.16 : 0) - (e.charging > 0 ? 0.1 : 0) : 0
+  const sy = 1 - footfall + rear - crouch
+  const sx = 1 + footfall - rear * 0.6 + crouch
+  if (!e.flying) ctx.translate(0, r * (1 - sy))
+  ctx.scale(pop * (1 + 0.3 * hf) * breath * sx, (pop * (1 - 0.24 * hf) / breath) * sy)
   // The hound's wedge points where it will run.
   if (e.shape === 'hound') ctx.scale(e.facing < 0 ? -1 : 1, 1)
   if (e.elite && !o.contrast) {
@@ -1444,6 +1471,22 @@ function drawEnemy(ctx: CanvasRenderingContext2D, e: LiveEnemy, sim: Simulation,
     ctx.globalAlpha = 0.5
     ctx.drawImage(glowSprite(e.accent), -r * 2.2, -r * 2.2, r * 4.4, r * 4.4)
     ctx.restore()
+  }
+  if (e.shape === 'spark') {
+    // Wings: two fast-beating blades behind the body. Loot never has wings.
+    const flap = Math.sin(time * 34 + e.uid) * 0.7
+    ctx.fillStyle = 'rgba(255, 236, 214, 0.85)'
+    ctx.strokeStyle = INK
+    ctx.lineWidth = 1.5
+    for (const side of [-1, 1]) {
+      ctx.save()
+      ctx.rotate(side * (0.5 + flap))
+      ctx.beginPath()
+      ctx.ellipse(side * r * 0.95, -r * 0.35, r * 0.75, r * 0.32, side * 0.3, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+      ctx.restore()
+    }
   }
   if (!o.contrast) {
     // A dark halo separates the silhouette from a busy backdrop.
@@ -1569,21 +1612,41 @@ function drawEnemy(ctx: CanvasRenderingContext2D, e: LiveEnemy, sim: Simulation,
     ctx.stroke()
   }
   if (e.shield) {
-    const a0 = e.facing > 0 ? -1 : Math.PI - 1
-    const a1 = e.facing > 0 ? 1 : Math.PI + 1
+    // The plate's angle: facing the ball, swinging round while it turns, hanging low while the guard is down.
+    const turn = TUNE.shieldTurn * (e.defId === 'knight' ? 1.25 : 1)
+    const swing = clamp(e.turnT / turn, 0, 1)
+    let mid = e.facing > 0 ? 0 : Math.PI
+    if (swing > 0) mid += (e.facing > 0 ? -1 : 1) * swing * Math.PI * 0.9
+    const down = e.guard > 0
+    if (down) mid = Math.PI / 2 + e.facing * 0.5
+    const a0 = mid - (down ? 0.6 : 1)
+    const a1 = mid + (down ? 0.6 : 1)
+    const cx = Math.cos(mid) * r * 0.2
+    const cy = Math.sin(mid) * r * 0.2
+    ctx.globalAlpha = down ? 0.55 : 1
     ctx.strokeStyle = INK
     ctx.lineWidth = 8
     ctx.beginPath()
-    ctx.arc(e.facing * r * 0.2, 0, r + 5, a0, a1)
+    ctx.arc(cx, cy, r + 5, a0, a1)
     ctx.stroke()
-    ctx.strokeStyle = '#f3efe6'
+    ctx.strokeStyle = down ? '#9aa4b2' : '#f3efe6'
     ctx.lineWidth = 4.5
     ctx.stroke()
-    ctx.strokeStyle = 'rgba(154, 215, 255, 0.8)'
-    ctx.lineWidth = 1.5
-    ctx.beginPath()
-    ctx.arc(e.facing * r * 0.2, 0, r + 9, a0 + 0.2, a1 - 0.2)
-    ctx.stroke()
+    ctx.globalAlpha = 1
+    if (!down) {
+      ctx.strokeStyle = 'rgba(154, 215, 255, 0.8)'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.arc(cx, cy, r + 9, a0 + 0.2, a1 - 0.2)
+      ctx.stroke()
+    } else {
+      // Guard down: the opening reads as a ring of light, draining with the time left to punish it.
+      ctx.strokeStyle = '#8dffc0'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.arc(0, 0, r + 11, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (e.guard / TUNE.guardBreak))
+      ctx.stroke()
+    }
   }
   if (e.armorGate) {
     // Armor plates: small bars on the crown so armor reads by shape.
@@ -1662,7 +1725,11 @@ function drawEnemy(ctx: CanvasRenderingContext2D, e: LiveEnemy, sim: Simulation,
     ctx.beginPath()
     ctx.roundRect(e.x - w / 2, y, w * pct, 4, 2)
     ctx.fill()
-    if (e.affix) worldText(ctx, AFFIXES[e.affix].label, e.x, y - 8, 11, AFFIXES[e.affix].color)
+    if (e.affix) {
+      // Two affixed elites shoulder to shoulder: stagger the labels so both stay readable.
+      const crowded = sim.enemies.some((o) => o !== e && o.alive && o.affix && o.uid < e.uid && Math.abs(o.x - e.x) < 96 && Math.abs(o.y - e.y) < 60)
+      worldText(ctx, AFFIXES[e.affix].label, e.x, y - 8 - (crowded ? 15 : 0), 11, AFFIXES[e.affix].color)
+    }
   }
 }
 
@@ -1747,7 +1814,10 @@ function drawBoss(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   ctx.save()
   const stuck = b.recover > 0 ? Math.sin(t * 40) * 1.5 * (b.recover / 0.9) : 0
   const winding = b.attack !== 'none' ? Math.sin(t * 50) * 2 : 0
-  ctx.translate(b.x + stuck + winding, b.y)
+  // The shockwave wind-up: the whole body rears up on its pedestals before it drops.
+  const rear = b.attack === 'wave' ? Math.sin(clamp(1 - b.telegraph / 0.75, 0, 1) * Math.PI * 0.5) * 18 : 0
+  if (b.attack === 'wave') drawWaveTelegraph(ctx, b.x - b.r * 0.8, FLOOR_Y, b.telegraph, t)
+  ctx.translate(b.x + stuck + winding, b.y - rear)
   ctx.scale(1 + hf * 0.04, 1 - hf * 0.03)
   // Heat haze behind.
   if (!o.contrast) {
@@ -1869,16 +1939,43 @@ function drawBoss(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
     ctx.lineTo(0, -10 + hr)
     ctx.stroke()
   }
+  if (open && b.recover <= 0) {
+    // Guarded: two iron shutters close over the heart, leaving a hot slit. Rams are turned (half damage).
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(0, -10, hr + 6, 0, Math.PI * 2)
+    ctx.clip()
+    for (const side of [-1, 1]) {
+      const sg = ctx.createLinearGradient(0, -10 + side * (hr + 6), 0, -10 + side * 4)
+      sg.addColorStop(0, '#2a241e')
+      sg.addColorStop(1, '#6a6058')
+      ctx.fillStyle = sg
+      ctx.fillRect(-hr - 8, side < 0 ? -10 - hr - 8 : -6, hr * 2 + 16, hr + 4)
+      ctx.strokeStyle = INK
+      ctx.lineWidth = 2.5
+      ctx.strokeRect(-hr - 8, side < 0 ? -10 - hr - 8 : -6, hr * 2 + 16, hr + 4)
+    }
+    ctx.restore()
+  }
   ctx.strokeStyle = INK
   ctx.lineWidth = 3
   ctx.beginPath()
   ctx.arc(0, -10, hr + 8, 0, Math.PI * 2)
   ctx.stroke()
   if (b.recover > 0) {
+    // The punish window: a green ring draining with the time left. Hits land at 130%.
+    const pulse = 1 + 0.08 * Math.sin(t * 22)
+    if (!o.contrast) {
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.globalAlpha = 0.45
+      ctx.drawImage(glowSprite('#8dffc0'), -hr * 2.4, -10 - hr * 2.4, hr * 4.8, hr * 4.8)
+      ctx.restore()
+    }
     ctx.strokeStyle = '#8dffc0'
-    ctx.lineWidth = 4
+    ctx.lineWidth = 5
     ctx.beginPath()
-    ctx.arc(0, -10, hr + 14, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (b.recover / 0.9))
+    ctx.arc(0, -10, (hr + 15) * pulse, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * clamp(b.recover / BOSS_RULES.windowWave, 0, 1))
     ctx.stroke()
   }
   if (b.attack === 'barrage') {
@@ -1951,6 +2048,71 @@ function drawBoss(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   }
 }
 
+/** Floor chevrons running away from the Colossus while it rears up: a shockwave is coming along the floor. */
+function drawWaveTelegraph(ctx: CanvasRenderingContext2D, x: number, y: number, left: number, time: number): void {
+  const k = clamp(1 - left / 0.75, 0, 1)
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  for (let i = 0; i < 7; i++) {
+    const cx = x - 40 - i * 64 - ((time * 140) % 64)
+    const a = (0.25 + 0.75 * k) * (1 - i / 8)
+    ctx.globalAlpha = a
+    ctx.strokeStyle = INK
+    ctx.lineWidth = 7
+    ctx.beginPath()
+    ctx.moveTo(cx + 12, y - 30)
+    ctx.lineTo(cx, y - 16)
+    ctx.lineTo(cx + 12, y - 2)
+    ctx.stroke()
+    ctx.strokeStyle = k > 0.7 && Math.sin(time * 30) > 0 ? '#fff1c2' : '#ff8a3c'
+    ctx.lineWidth = 3.5
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+/** A shockwave crest rolling along the floor: a hot hump of light with a smear behind it. */
+function drawShocks(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions): void {
+  if (!sim.shocks.length) return
+  for (const w of sim.shocks) {
+    const flick = 1 + Math.sin(o.time * 40 + w.x * 0.05) * 0.08
+    const h = SHOCK_H * flick
+    ctx.save()
+    if (!o.contrast) {
+      ctx.globalCompositeOperation = 'lighter'
+      // Smear behind the crest.
+      const tail = ctx.createLinearGradient(w.x, 0, w.x - w.dir * 160, 0)
+      tail.addColorStop(0, 'rgba(255, 170, 90, 0.55)')
+      tail.addColorStop(1, 'rgba(255, 120, 40, 0)')
+      ctx.fillStyle = tail
+      ctx.beginPath()
+      ctx.moveTo(w.x, w.y - h * 0.7)
+      ctx.quadraticCurveTo(w.x - w.dir * 60, w.y - h * 0.25, w.x - w.dir * 160, w.y)
+      ctx.lineTo(w.x, w.y)
+      ctx.closePath()
+      ctx.fill()
+      ctx.drawImage(glowSprite('#ffb15a'), w.x - 60, w.y - 70, 120, 120)
+    }
+    ctx.globalCompositeOperation = 'source-over'
+    // The crest.
+    const g = ctx.createLinearGradient(0, w.y - h, 0, w.y)
+    g.addColorStop(0, '#fff6dc')
+    g.addColorStop(0.45, '#ffb15a')
+    g.addColorStop(1, '#c43a10')
+    ctx.fillStyle = o.contrast ? '#ffd15c' : g
+    ctx.strokeStyle = INK
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.moveTo(w.x - 26, w.y)
+    ctx.quadraticCurveTo(w.x - w.dir * 4, w.y - h * 1.5, w.x + 22, w.y)
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+    ctx.restore()
+  }
+}
+
 function drawTelegraph(ctx: CanvasRenderingContext2D, x: number, y: number, t: number, time: number): void {
   ctx.save()
   const a = 0.5 + Math.sin(t * 24) * 0.15
@@ -2005,30 +2167,33 @@ function drawBall(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   const armed = ratio >= TUNE.cleanRamRatio
   const leaving = o.outro?.kind === 'clear' ? clamp(o.outro.t, 0, 1) : 0
   const scale = 1 - leaving
+  // White Hot: the combo chain has set the ball alight.
+  const hot = sim.overdrive && !sim.done
   groundShadow(ctx, juice, view.x, view.y + b.r, b.r * scale)
   ctx.save()
   // Tapered trail, hotter once the ball is fast enough to ram cleanly.
-  if (sim.trail.length > 2 && sp > 80) {
+  if (sim.trail.length > 2 && (sp > 80 || hot)) {
     // The newest trail point is the end of the latest tick; the drawn ball is between ticks.
     const pts = [...sim.trail.slice(0, -1), view]
-    const width = b.r * (armed ? 1.05 : 0.8)
+    const width = b.r * (hot ? 1.35 : armed ? 1.05 : 0.8)
     if (!o.contrast) ctx.globalCompositeOperation = 'lighter'
-    ctx.globalAlpha = (armed ? 0.55 : 0.32) * scale * clamp((sp - 80) / 300, 0, 1)
-    ribbon(ctx, pts, width, v.trail)
-    if (armed) {
+    ctx.globalAlpha = (hot ? 0.75 : armed ? 0.55 : 0.32) * scale * clamp((sp - 80) / 300, hot ? 0.5 : 0, 1)
+    ribbon(ctx, pts, width, hot ? '#ffb347' : v.trail)
+    if (armed || hot) {
       ctx.globalAlpha = 0.5 * scale
       ribbon(ctx, pts, width * 0.38, '#fff6ea')
     }
     ctx.globalCompositeOperation = 'source-over'
     ctx.globalAlpha = 1
   }
-  if (armed && !o.contrast) {
+  if (armed && !o.contrast && !hot) {
     ctx.globalCompositeOperation = 'lighter'
     ctx.globalAlpha = (0.2 + 0.06 * Math.sin(o.time * 14)) * scale
     ctx.drawImage(glowSprite(v.trail), view.x - b.r * 2.4, view.y - b.r * 2.4, b.r * 4.8, b.r * 4.8)
     ctx.globalCompositeOperation = 'source-over'
     ctx.globalAlpha = 1
   }
+  if (hot) drawWhiteHot(ctx, view.x, view.y, b.r * scale, b.vx, b.vy, o)
   if (juice.armPulse > 0) {
     ctx.strokeStyle = `rgba(141, 255, 192, ${juice.armPulse})`
     ctx.lineWidth = 3 * juice.armPulse
@@ -2073,9 +2238,9 @@ function drawBall(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   // Body lit from the top left; this lighting does not spin.
   const g = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.05, 0, 0, r)
   g.addColorStop(0, '#fff6ea')
-  g.addColorStop(0.28, shade(v.core, 0.2))
-  g.addColorStop(0.7, v.core)
-  g.addColorStop(1, shade(v.core, -0.7))
+  g.addColorStop(0.28, hot ? '#fff1c2' : shade(v.core, 0.2))
+  g.addColorStop(0.7, hot ? '#ffb347' : v.core)
+  g.addColorStop(1, hot ? '#a8401a' : shade(v.core, -0.7))
   ctx.fillStyle = g
   ctx.beginPath()
   ctx.arc(0, 0, r, 0, Math.PI * 2)
@@ -2120,7 +2285,7 @@ function drawBall(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   ctx.beginPath()
   ctx.arc(0, 0, r, 0, Math.PI * 2)
   ctx.stroke()
-  ctx.strokeStyle = o.contrast ? '#ffffff' : v.shell
+  ctx.strokeStyle = o.contrast ? '#ffffff' : hot ? '#fff1c2' : v.shell
   ctx.lineWidth = 3.5
   ctx.stroke()
   if (v.pattern === 'spikes') drawSpikeRing(ctx, v, r, lerp(sim.prevSpin, b.spin, o.alpha))
@@ -2171,12 +2336,12 @@ function drawBall(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
     ctx.lineCap = 'round'
     for (let k = 0; k < 2; k++) {
       ctx.rotate(Math.PI)
-      ctx.strokeStyle = 'rgba(141, 255, 210, 0.85)'
+      ctx.strokeStyle = hot ? 'rgba(255, 226, 140, 0.9)' : 'rgba(141, 255, 210, 0.85)'
       ctx.lineWidth = 2.5
       ctx.beginPath()
       ctx.arc(0, 0, b.r + 4, 0, 1.1)
       ctx.stroke()
-      ctx.strokeStyle = 'rgba(141, 255, 210, 0.3)'
+      ctx.strokeStyle = hot ? 'rgba(255, 190, 90, 0.35)' : 'rgba(141, 255, 210, 0.3)'
       ctx.lineWidth = 6
       ctx.stroke()
     }
@@ -2204,6 +2369,47 @@ function drawBall(ctx: CanvasRenderingContext2D, sim: Simulation, o: DrawOptions
   ctx.moveTo(view.x + Math.cos(notch) * (ringR - 5), view.y + Math.sin(notch) * (ringR - 5))
   ctx.lineTo(view.x + Math.cos(notch) * (ringR + 5), view.y + Math.sin(notch) * (ringR + 5))
   ctx.stroke()
+}
+
+/**
+ * White Hot: a flickering aura and tongues of flame streaming off the back of
+ * the ball, so the state reads from across the room and in a screenshot.
+ */
+function drawWhiteHot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, vx: number, vy: number, o: DrawOptions): void {
+  const t = o.time
+  ctx.save()
+  if (!o.contrast) {
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.globalAlpha = 0.5 + 0.12 * Math.sin(t * 23)
+    ctx.drawImage(glowSprite('#ffb347'), x - r * 3.4, y - r * 3.4, r * 6.8, r * 6.8)
+    ctx.globalAlpha = 0.35
+    ctx.drawImage(glowSprite('#fff1c2'), x - r * 1.9, y - r * 1.9, r * 3.8, r * 3.8)
+  }
+  // Flames lean away from the direction of travel (straight up at rest).
+  const sp = Math.hypot(vx, vy)
+  const back = sp > 60 ? Math.atan2(-vy, -vx) : -Math.PI / 2
+  const lean = clamp(sp / 900, 0, 1)
+  ctx.globalCompositeOperation = o.contrast ? 'source-over' : 'lighter'
+  for (let i = 0; i < 6; i++) {
+    const spread = (i / 5 - 0.5) * (1.6 - lean * 0.7)
+    const a = back * lean + (-Math.PI / 2) * (1 - lean) + spread
+    const len = r * (1.1 + 0.5 * Math.sin(t * 19 + i * 1.7) + lean * 0.9)
+    const bx = x + Math.cos(a) * r * 0.7
+    const by = y + Math.sin(a) * r * 0.7
+    const tx = x + Math.cos(a) * (r + len)
+    const ty = y + Math.sin(a) * (r + len)
+    const nx = -Math.sin(a) * r * 0.32
+    const ny = Math.cos(a) * r * 0.32
+    ctx.globalAlpha = 0.55
+    ctx.fillStyle = i % 2 ? '#ff8a3d' : '#ffd27a'
+    ctx.beginPath()
+    ctx.moveTo(bx + nx, by + ny)
+    ctx.quadraticCurveTo(x + Math.cos(a) * (r + len * 0.5) + nx * 0.6, y + Math.sin(a) * (r + len * 0.5) + ny * 0.6, tx, ty)
+    ctx.quadraticCurveTo(x + Math.cos(a) * (r + len * 0.5) - nx * 0.6, y + Math.sin(a) * (r + len * 0.5) - ny * 0.6, bx - nx, by - ny)
+    ctx.closePath()
+    ctx.fill()
+  }
+  ctx.restore()
 }
 
 /** A smooth tapered ribbon through points, widest at the newest end. */
@@ -2346,6 +2552,18 @@ function drawScreenFx(ctx: CanvasRenderingContext2D, sim: Simulation, cam: Camer
     g.addColorStop(1, `rgba(110, 18, 18, ${0.5 * beat})`)
     ctx.fillStyle = g
     ctx.fillRect(0, 0, w, h)
+  }
+  if ((sim.overdrive || juice.overdriveFlash > 0) && !sim.done && !o.contrast) {
+    // White Hot: the edges of the screen run warm, flaring as the state ignites.
+    const k = (sim.overdrive ? 0.22 + 0.06 * Math.sin(o.time * 9) : 0) + juice.overdriveFlash * 0.35
+    const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.42, w / 2, h / 2, Math.hypot(w, h) * 0.55)
+    g.addColorStop(0, 'rgba(0,0,0,0)')
+    g.addColorStop(1, `rgba(255, 150, 50, ${clamp(k, 0, 0.5)})`)
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, w, h)
+    ctx.restore()
   }
   if (juice.hurtFlash > 0) {
     const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.25, w / 2, h / 2, Math.max(w, h) * 0.7)
@@ -2497,7 +2715,9 @@ function drawFallbackTitle(ctx: CanvasRenderingContext2D, w: number, h: number, 
 /**
  * A reward preview that uses the game's own movement functions. Two balls run
  * the same scripted input from the same start at the same scale: the ghost is
- * your current ball, the solid one is the ball with the offered part.
+ * your current ball, the solid one is the ball with the offered part. The view
+ * follows the new ball over a floor marked every 100 px, so acceleration, top
+ * speed, hop height, and bounce read at a glance even in a small card.
  */
 export class CardPreview {
   private a: Body
@@ -2508,6 +2728,8 @@ export class CardPreview {
   private trailB: { x: number; y: number }[] = []
   /** Real time not yet simulated: the preview runs at the same pace on 60, 90, and 144 Hz screens. */
   private acc = 0
+  private camX = 0
+  private camY = 0
 
   constructor(
     public before: Stats,
@@ -2521,39 +2743,34 @@ export class CardPreview {
 
   private spawn(stats: Stats): Body {
     const r = ballRadius(stats.mass)
-    return { x: 80, y: 300 - r, vx: 0, vy: 0, r, spin: 0 }
+    return { x: 0, y: -r, vx: 0, vy: 0, r, spin: 0 }
   }
 
-  /** Scripted input: roll right, hop at 1.1 s, turn back at 2.2 s, repeat every 4 s. */
+  /** Scripted input, every 3.4 s: roll right, hop at 0.85 s and float a moment, let go at 1.9 s, rest, start over. */
   private input(t: number): { x: number; hop: boolean; hold: boolean } {
-    const local = t % 4
-    if (local < 2.2) return { x: 1, hop: local > 1.1 && local < 1.15, hold: local > 1.1 && local < 1.5 }
-    return { x: -1, hop: local > 3.1 && local < 3.15, hold: false }
+    const local = t % 3.4
+    if (local < 1.9) return { x: 1, hop: local > 0.85 && local < 0.9, hold: local > 0.85 && local < 1.2 }
+    return { x: 0, hop: false, hold: false }
   }
 
-  private advance(body: Body, stats: Stats, grounded: boolean, dt: number, input: { x: number; hop: boolean; hold: boolean }, width: number): boolean {
+  private advance(body: Body, stats: Stats, grounded: boolean, dt: number, input: { x: number; hop: boolean; hold: boolean }): boolean {
     let ax = horizontalAccel(stats, input.x, body.vx, grounded)
     if (Math.abs(body.vx) >= stats.maxSpeed && Math.sign(ax) === Math.sign(body.vx)) ax = 0
     body.vx += ax * dt
     body.vy += verticalAccel(stats, input.hold, false, grounded) * dt
     if (Math.abs(body.vx) > stats.maxSpeed) body.vx = Math.sign(body.vx) * stats.maxSpeed
+    if (grounded && input.x === 0 && Math.abs(body.vx) < 10) body.vx = 0
     if (input.hop && grounded) body.vy = hopVelocity(stats)
     body.x += body.vx * dt
     body.y += body.vy * dt
     let ground = false
-    const boxes = [
-      { x: -100, y: 300, w: width + 200, h: 100 },
-      { x: -100, y: -400, w: 100, h: 800 },
-      { x: width, y: -400, w: 100, h: 800 },
-    ]
-    for (const box of boxes) {
-      const c = resolveCircleAabb(body, box, stats.restitution, 1)
-      if (c.hit && c.ny < -0.55) {
-        ground = true
-        if (Math.abs(body.vy) < 48) body.vy = 0
-      }
+    const c = resolveCircleAabb(body, { x: -1e5, y: 0, w: 2e5, h: 200 }, stats.restitution, 1)
+    if (c.hit && c.ny < -0.55) {
+      ground = true
+      if (c.impactSpeed < 300 && body.vy < 0) body.vy *= clamp((c.impactSpeed - 110) / 190, 0, 1)
+      if (Math.abs(body.vy) < 48) body.vy = 0
     }
-    if (ground) body.spin += (body.vx / body.r) * dt
+    body.spin += (ground ? body.vx / body.r : 0) * dt
     return ground
   }
 
@@ -2568,44 +2785,68 @@ export class CardPreview {
       canvas.width = bw
       canvas.height = bh
     }
-    const scale = h / 340
-    const worldW = w / scale
+    // About 120 world px tall: a balanced ball is ~28 px across in a 96 px strip.
+    const scale = h / 120
+    const viewW = w / scale
+    const viewH = h / scale
     this.acc = Math.min(this.acc + Math.max(0, dt), 8 / 120)
     while (this.acc >= 1 / 120) {
       this.acc -= 1 / 120
       this.t += 1 / 120
       const input = this.input(this.t)
-      this.groundA = this.advance(this.a, this.before, this.groundA, 1 / 120, input, worldW)
-      this.groundB = this.advance(this.b, this.after, this.groundB, 1 / 120, input, worldW)
+      this.groundA = this.advance(this.a, this.before, this.groundA, 1 / 120, input)
+      this.groundB = this.advance(this.b, this.after, this.groundB, 1 / 120, input)
+      if (this.t % 3.4 < 1 / 120) {
+        this.a = this.spawn(this.before)
+        this.b = this.spawn(this.after)
+        this.trailB = []
+      }
     }
+    if (this.t > 34) this.t -= 34
     this.trailB.push({ x: this.b.x, y: this.b.y })
-    if (this.trailB.length > 10) this.trailB.shift()
-    if (this.t > 12) {
-      this.t = 0
-      this.a = this.spawn(this.before)
-      this.b = this.spawn(this.after)
-      this.trailB = []
-    }
+    if (this.trailB.length > 12) this.trailB.shift()
+    // Follow the new ball: it sits a third of the way in, and the view lifts only when a hop would leave the frame.
+    const wantX = this.b.x - viewW * 0.36
+    const wantY = Math.min(-(viewH - 18 / scale), this.b.y - this.b.r - 10)
+    const k = 1 - Math.exp(-10 * Math.max(dt, 1 / 240))
+    this.camX = Math.abs(wantX - this.camX) > viewW ? wantX : this.camX + (wantX - this.camX) * k
+    this.camY = Math.abs(wantY - this.camY) > viewH ? wantY : this.camY + (wantY - this.camY) * k * 0.8
+    // Never lose the new ball: a fast light core or a big hop outruns the easing, so the frame is also a hard bound.
+    const m = this.b.r + 6
+    this.camX = clamp(this.camX, this.b.x + m - viewW, this.b.x - m)
+    this.camY = clamp(this.camY, this.b.y + m + 6 - viewH, this.b.y - m)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const bg = ctx.createLinearGradient(0, 0, 0, h)
-    bg.addColorStop(0, '#1c1612')
+    bg.addColorStop(0, '#141922')
     bg.addColorStop(1, '#2a1a10')
     ctx.fillStyle = bg
     ctx.fillRect(0, 0, w, h)
     ctx.save()
     ctx.scale(scale, scale)
-    const fg = ctx.createLinearGradient(0, 300, 0, 360)
+    ctx.translate(-this.camX, -this.camY)
+    // Far pillars drift at half speed, so motion reads even between floor marks.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.035)'
+    const far = this.camX * 0.5
+    for (let x = Math.floor((this.camX - far) / 140) * 140 - 140; x < this.camX + viewW + 140; x += 140) {
+      ctx.fillRect(x + far, this.camY, 26, viewH)
+    }
+    const fg = ctx.createLinearGradient(0, 0, 0, 40)
     fg.addColorStop(0, '#4a4038')
     fg.addColorStop(1, '#1e1915')
     ctx.fillStyle = fg
-    ctx.fillRect(0, 300, worldW, 60)
+    ctx.fillRect(this.camX - 10, 0, viewW + 20, 60)
     ctx.fillStyle = BONE
-    ctx.fillRect(0, 300, worldW, 6)
+    ctx.fillRect(this.camX - 10, 0, viewW + 20, 2.5)
+    // Distance marks every 100 px.
+    ctx.fillStyle = 'rgba(239, 228, 210, 0.45)'
+    for (let x = Math.floor(this.camX / 100) * 100; x < this.camX + viewW + 100; x += 100) {
+      ctx.fillRect(x - 1, 2.5, 2, 7)
+    }
     ctx.lineCap = 'round'
     for (let i = 1; i < this.trailB.length; i++) {
-      ctx.globalAlpha = 0.3 * (i / this.trailB.length)
+      ctx.globalAlpha = 0.35 * (i / this.trailB.length)
       ctx.strokeStyle = this.afterVisual.trail
-      ctx.lineWidth = this.b.r * (i / this.trailB.length)
+      ctx.lineWidth = this.b.r * 1.1 * (i / this.trailB.length)
       ctx.beginPath()
       ctx.moveTo(this.trailB[i - 1]!.x, this.trailB[i - 1]!.y)
       ctx.lineTo(this.trailB[i]!.x, this.trailB[i]!.y)
@@ -2619,9 +2860,10 @@ export class CardPreview {
 }
 
 function drawPreviewBall(ctx: CanvasRenderingContext2D, body: Body, visual: VisualDef, ghost: boolean): void {
-  ctx.fillStyle = 'rgba(0,0,0,0.35)'
+  const lift = clamp(1 - (-body.y - body.r) / 160, 0.25, 1)
+  ctx.fillStyle = `rgba(0,0,0,${0.4 * lift})`
   ctx.beginPath()
-  ctx.ellipse(body.x, 302, body.r, body.r * 0.25, 0, 0, Math.PI * 2)
+  ctx.ellipse(body.x, 2, body.r * lift, body.r * 0.25 * lift, 0, 0, Math.PI * 2)
   ctx.fill()
   if (ghost) {
     ctx.globalAlpha = 0.5

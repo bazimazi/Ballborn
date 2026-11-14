@@ -436,8 +436,52 @@ export class Juice {
         this.squashBall(e.nx, 0, 0.26)
         this.kick(e.nx, -0.4, 5)
         return
+      case 'guard': {
+        // The plate swings down: a cold ring, a shower of blue-white chips, a short freeze.
+        this.waves.push({ x: e.x, y: e.y, r0: 10, r1: 70, life: 0.26, max: 0.26, color: '#9ad7ff', width: 6 })
+        for (let i = 0; i < this.n(12); i++) {
+          const a = this.r(-Math.PI, 0)
+          const s = this.r(220, 480)
+          this.streaks.push({ x: e.x, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: this.r(0.2, 0.4), max: 0.4, color: this.pick(['#e8f6ff', '#9ad7ff', '#c7ccd4']), width: this.r(2, 3.5), gravity: 1000 })
+        }
+        this.flare(e.x, e.y, 200, '#9ad7ff', 0.3)
+        this.addTrauma(0.22)
+        this.hitstop(0.07)
+        return
+      }
+      case 'overdrive':
+        if (e.on) {
+          // White Hot: the ball flares, the room punches in, a ring of heat rolls out.
+          this.waves.push({ x: e.x, y: e.y, r0: 14, r1: 160, life: 0.4, max: 0.4, color: '#fff1c2', width: 9 })
+          this.waves.push({ x: e.x, y: e.y, r0: 8, r1: 96, life: 0.3, max: 0.3, color: '#ffb15a', width: 5 })
+          this.burstRays(e.x, e.y, 12, 180, '#ffe2a8', 0.32)
+          this.flare(e.x, e.y, 420, '#ffd27a', 0.6)
+          this.addTrauma(0.3)
+          if (this.settings.motion) this.zoomPunch = Math.min(0.1, this.zoomPunch + 0.045)
+          this.overdriveFlash = 1
+        } else {
+          for (let i = 0; i < this.n(6); i++) this.puffs.push({ x: e.x + this.r(-6, 6), y: e.y + this.r(-6, 6), vx: this.r(-40, 40), vy: this.r(-80, -30), r: 6, grow: 30, life: 0.6, max: 0.6, color: '#3a2e26', alpha: 0.45 })
+        }
+        return
+      case 'shock':
+        this.waves.push({ x: e.x, y: e.y, r0: 20, r1: 140, life: 0.3, max: 0.3, color: '#ffb15a', width: 7 })
+        this.debris(e.x, e.y - 4, 8, '#5a534c')
+        for (let i = 0; i < this.n(10); i++) {
+          this.puffs.push({ x: e.x + this.r(-20, 20), y: e.y - 6, vx: this.r(-260, 60), vy: this.r(-70, -10), r: this.r(8, 14), grow: 46, life: this.r(0.5, 0.8), max: 0.8, color: '#6a5c4e', alpha: 0.5 })
+        }
+        this.addTrauma(0.35)
+        return
+      case 'step':
+        for (let i = 0; i < this.n(3); i++) {
+          this.puffs.push({ x: e.x, y: e.y - 2, vx: this.r(-50, 50), vy: this.r(-40, -10), r: 3, grow: 18, life: 0.3, max: 0.3, color: '#9a8b7b', alpha: 0.32 })
+        }
+        this.squashBall(0, -1, 0.1)
+        return
     }
   }
+
+  /** 1 when the ball has just gone White Hot, fading; the HUD and the screen edge use it. */
+  overdriveFlash = 0
 
   /** The room is clear: the gate blows open with light. */
   gateOpen(x: number, y: number): void {
@@ -559,6 +603,7 @@ export class Juice {
     this.zoomPunch *= Math.exp(-7 * realDt)
     this.hurtFlash = Math.max(0, this.hurtFlash - realDt * 2.2)
     this.armPulse = Math.max(0, this.armPulse - realDt * 2.8)
+    this.overdriveFlash = Math.max(0, this.overdriveFlash - realDt * 1.6)
     // Under-damped spring: flatten, rebound past rest into a stretch, settle.
     const k = 520
     const c = 16
@@ -646,9 +691,10 @@ export class Juice {
       this.armPulse = 1
     } else if (this.armed && ratio < TUNE.cleanRamRatio - 0.06) this.armed = false
     this.ghostClock -= dt
-    if (ratio > 0.62 && this.ghostClock <= 0 && this.settings.particles > 0) {
-      this.ghostClock = 0.028
-      this.ghosts.push({ x: bx, y: by, r: sim.ball.r, life: 0.2, max: 0.2, color: sim.build.visual.trail })
+    const hot = sim.overdrive
+    if ((ratio > 0.62 || (hot && ratio > 0.25)) && this.ghostClock <= 0 && this.settings.particles > 0) {
+      this.ghostClock = hot ? 0.02 : 0.028
+      this.ghosts.push({ x: bx, y: by, r: sim.ball.r, life: hot ? 0.26 : 0.2, max: hot ? 0.26 : 0.2, color: hot ? '#ffcf70' : sim.build.visual.trail })
       if (this.ghosts.length > 14) this.ghosts.shift()
     }
   }

@@ -84,7 +84,7 @@ export class Game {
   screen: Screen = 'title'
   returnTo: Screen = 'title'
   pauseReturn: Screen = 'play'
-  codexTab: View['codexTab'] = 'components'
+  codexTab: View['codexTab'] = 'rules'
   run: RunState | null = null
   sim: Simulation | null = null
   offers: Offer[] = []
@@ -285,7 +285,7 @@ export class Game {
       if (!still) {
         drawWorld(this.ctx, this.sim, this.cam, w, h, {
           alpha, particles: s.particles, colorblind: s.colorblind, contrast: s.highContrast, flash: s.flashes ? this.flash : 0,
-          motion: s.cameraMotion, juice, time: now / 1000, iris: s.cameraMotion ? this.iris : 1, outro, coinTarget: this.coinTarget(w, resized),
+          motion: s.cameraMotion, juice, time: now / 1000, iris: s.cameraMotion ? (outro?.kind === 'clear' ? Math.min(this.iris, 1 - Math.min(1, outro.t * 1.1)) : this.iris) : 1, outro, coinTarget: this.coinTarget(w, resized),
           // Bloom is the first thing a struggling device gives up; lighting stays (it is one small canvas).
           post: this.post, bloom: this.renderScale >= 0.75 ? 1 : 0, impact: s.flashes ? juice.impact : 0,
         })
@@ -800,6 +800,22 @@ export class Game {
         else if (e.type === 'wallkick') {
           this.audio.wallKick()
           if (!this.lab) this.buzz(15)
+        } else if (e.type === 'overdrive') {
+          this.audio.overdrive(e.on)
+          if (e.on) {
+            this.audio.duck(0.4, 0.15)
+            this.buzz([20, 30, 40])
+            this.flashTo(0.14)
+            this.say('White hot. Every ram is clean.')
+            this.hintOnce('hot', 'White hot: keep the chain going. Every ram is clean and hits harder.', 'flame')
+          }
+        } else if (e.type === 'guard') {
+          this.audio.guardBreak()
+          this.buzz(25)
+          this.hintOnce('guard', 'Guard down. Ram it from the front now.', 'impact')
+        } else if (e.type === 'shock') {
+          this.audio.shock()
+          this.hintOnce('shock', 'Shockwave: hop over it.', 'hop')
         }
       },
       onDiscovery: (id) => this.onDiscovery(id),
@@ -872,7 +888,7 @@ export class Game {
   private startOutro(sim: Simulation): void {
     if (this.outro) return
     const dead = sim.ended === 'dead'
-    this.outro = { kind: dead ? 'dead' : 'clear', t: 0, dur: dead ? 1.4 : 0.45, sim }
+    this.outro = { kind: dead ? 'dead' : 'clear', t: 0, dur: dead ? 1.4 : 0.6, sim }
     this.hitstop = 0
     // The death is decided now: a reload during the beat must not bring the room back.
     if (dead && !this.lab) this.clearCheckpoint()
@@ -1439,11 +1455,19 @@ ${currentBuild(run).archetype}`
       same.count++
       same.life = 3.2
     } else {
-      this.toasts.push({ text, life: 3.2, kind: kind ?? (ico === 'wrench' || ico === 'heart' ? 'part' : toastKind(text)), ico: ico ?? null, count: 1 })
+      this.toasts.push({ text, life: kind === 'tip' ? 5.2 : 3.2, kind: kind ?? (ico === 'wrench' || ico === 'heart' ? 'part' : toastKind(text)), ico: ico ?? null, count: 1 })
       if (this.toasts.length > 4) this.toasts.shift()
     }
     this.renderToasts()
   }
+
+  /** A one-time note the first time a mechanic shows up in this session (not in the lab, which is for poking). */
+  private hintOnce(key: string, text: string, ico: IconName): void {
+    if (this.lab || this.hinted.has(key)) return
+    this.hinted.add(key)
+    this.toast(text, ico, 'tip')
+  }
+  private hinted = new Set<string>()
 
   /** A short buzz on a touch device, if the player wants it. */
   private buzz(pattern: number | number[]): void {
@@ -1784,7 +1808,7 @@ function musicIntensity(sim: Simulation): number {
   if (sim.done) return 0.15
   const speed = hypot(sim.ball.vx, sim.ball.vy) / Math.max(1, sim.stats.maxSpeed)
   const armed = speed >= TUNE.cleanRamRatio ? 0.14 : speed * 0.12
-  const combo = Math.min(0.28, sim.combo * 0.035)
+  const combo = Math.min(0.28, sim.combo * 0.035) + (sim.overdrive ? 0.14 : 0)
   if (sim.boss && sim.boss.alive) return 0.55 + (sim.boss.phase - 1) * 0.14 + armed * 0.5 + combo * 0.5
   if (sim.exitOpen) return 0.22
   const alive = sim.enemies.filter((e) => e.alive).length

@@ -348,6 +348,38 @@ export class AudioBus {
     this.tone(180, t + 0.14, 0.14, 'square', 0.06, this.sfxGain, P_WARN)
   }
 
+  /** White Hot ignites: a rising whoosh and a bright fifth; when the chain breaks, a short falling hiss. */
+  overdrive(on: boolean): void {
+    if (!this.ctx || !this.sfxGain) return
+    const t = this.ctx.currentTime
+    if (on) {
+      this.noiseBurst(t, 0.28, 2200, 0.1, this.sfxGain, P_WARN)
+      this.tone(293.66, t, 0.18, 'sawtooth', 0.05, this.sfxGain, P_WARN)
+      this.tone(440, t + 0.06, 0.2, 'triangle', 0.07, this.sfxGain, P_WARN)
+      this.tone(587.33, t + 0.12, 0.32, 'triangle', 0.07, this.sfxGain, P_WARN)
+    } else {
+      this.noiseBurst(t, 0.18, 700, 0.05, this.sfxGain, P_LOW)
+      this.tone(220, t, 0.16, 'triangle', 0.03, this.sfxGain, P_LOW)
+    }
+  }
+
+  /** A shield's guard drops: a hard metallic clang with a ring on top. */
+  guardBreak(): void {
+    if (!this.ctx || !this.sfxGain) return
+    const t = this.ctx.currentTime
+    this.noiseBurst(t, 0.08, 4200, 0.1, this.sfxGain, P_HIT)
+    this.tone(880, t, 0.22, 'square', 0.035, this.sfxGain, P_HIT)
+    this.tone(1318.5, t + 0.02, 0.3, 'triangle', 0.04, this.sfxGain, P_HIT)
+  }
+
+  /** The Colossus sends a shockwave along the floor: a low thud and a grinding rumble. */
+  shock(): void {
+    if (!this.ctx || !this.sfxGain) return
+    const t = this.ctx.currentTime
+    this.tone(48, t, 0.4, 'sine', 0.16, this.sfxGain, P_WARN)
+    this.noiseBurst(t, 0.45, 260, 0.12, this.sfxGain, P_WARN)
+  }
+
   bossPhase(phase: number): void {
     if (!this.ctx || !this.sfxGain) return
     const t = this.ctx.currentTime

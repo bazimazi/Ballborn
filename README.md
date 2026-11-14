@@ -47,11 +47,17 @@ Rebinding a key that is already in use swaps the two bindings; Esc cancels a reb
 
 ## How the ball fights
 
-Speed is the weapon. The ring around the ball shows your speed. **A ram at more than 55% of your top speed, or one that breaks the construct, is clean: it costs you nothing.** Slower bumps glance and cost recoil. A clean ram that breaks a construct **plows through** the wreck: the ball keeps most of its speed (less through heavy constructs) instead of bouncing back, so a fast ball can chain through a line. Every ram kill also winds the ability cooldown back by almost half.
+Speed is the weapon. The ring around the ball shows your speed. **A ram at more than 55% of your top speed, or one that breaks the construct, is clean: it costs you nothing.** Slower bumps glance and cost a little recoil. A clean ram that breaks a construct **plows through** the wreck: the ball keeps most of its speed (less through heavy constructs) instead of bouncing back, so a fast ball can chain through a line. Every ram kill also winds the ability cooldown back by almost half.
 
-In the air, hop just as the ball touches a wall to **wall kick**: it springs away from the wall at a good share of top speed with most of a full hop. Holding hop while sliding into a wall never kicks on its own, so floating stays safe. Hits from above get past shields. Floating numbers say `ARMOR`, `BLOCK`, or `glance` when a hit was reduced, and why.
+**White Hot.** Chain five hits and kills without letting the combo lapse and the ball ignites: while the chain holds, every ram is clean, hits a quarter harder, and folds shields. The combo counter says `WHITE HOT`, the ball burns, and the screen edges run warm.
 
-Heavier balls start slower, hop shorter, and hit harder. Lighter balls snap to speed and can float, but their rams are soft. Slag is survivable: it spits the ball back up once per touch, for a cost.
+**Shields turn slowly.** A Shield Bearer or a Furnace Knight faces the ball, but needs half a second to swing its plate round (a little longer for the knight). Hop over it and ram its back, come down on the crown, or hit hard enough to fold the plate: any of these **breaks the guard** for 1.5 s (a draining green ring), and frontal rams land in full until it comes back up.
+
+In the air, hop just as the ball touches a wall to **wall kick**: it springs away from the wall at a good share of top speed with most of a full hop. Holding hop while sliding into a wall never kicks on its own, so floating stays safe. A rolling ball **climbs low ledges** (up to 40 px: stairs, turret mounts, bridge lips) instead of bonking off their side. Floating numbers say `ARMOR`, `BLOCK`, `GUARD BREAK`, or `glance` when a hit was reduced or opened up, and why.
+
+Heavier balls start slower, hop shorter, and hit harder (about 1.7× a balanced core per ram; ram damage grows with mass to the power 0.65, not linearly). Lighter balls snap to speed, float, and crit more often, but each ram is lighter (about 0.75×). Slag is survivable: it spits the ball back up once per touch, for a cost.
+
+**The Iron Colossus** is a three-phase fight. Crack its three rivets while the plate blunts everything else. Then the heart opens, but between attacks iron shutters close over it and turn rams to half damage: dodge the attack (a stamp, a barrage, or, from phase two, a shockwave along the floor that you hop), then punish the green window that each attack leaves open (130%). In phase three the middle floor gives way and the shockwaves come in pairs. Only hits inside a window feed the combo. The **Rules** tab in the codex has all of this, with the numbers.
 
 Arrows at the screen edge point at constructs the camera cannot see; they pulse red while one winds up. The **Ram Hound** shakes and shows chevrons before it charges in a straight line: hop it and it skids into a wall, dazed; meet it head-on at speed for a `COUNTER` (half again the damage); or lead it into slag.
 
@@ -104,7 +110,7 @@ Menus are keyboard and controller navigable with visible focus, and major state 
 
 ## Testing
 
-`npm test` runs about 110 tests in Node: regression cases for each Phase 1 defect in `docs/source-review-and-research.md`, fixed-step determinism at 30/60/120/144 Hz, collision safety, content validation, boss build parity, representative build profiles, a 15-minute lab soak, and the overhaul (`tests/overhaul.test.ts`: route shape, grades, score, daily seed, banish and pity, reaction hints, affixes, the Ram Hound).
+`npm test` runs about 130 tests in Node: regression cases for each Phase 1 defect in `docs/source-review-and-research.md`, fixed-step determinism at 30/60/120/144 Hz, collision safety, content validation, boss build parity, representative build profiles, a 15-minute lab soak, and the overhaul (`tests/overhaul.test.ts`: route shape, grades, score, daily seed, banish and pity, reaction hints, affixes, the Ram Hound), and the second play pass (`tests/playpass.test.ts`: the ram damage curve, ledge climbing, slow shields and guard breaks, White Hot, the Colossus's punish windows and shockwaves, challenge grading).
 
 `npm run smoke` serves `dist/` with `vite preview` and drives a locally installed Chrome or Edge through `playwright-core` in a fresh profile (your real saves are never touched): full tutorial and run to victory, death, shop, settings, codex, lab, keyboard and emulated-controller menus, focus loss, layout at 1280×720, 1920×1080, 800×600, and 125%/150% zoom, frame-cost measurement, and a soak. Set `CHROME_PATH` if the browser is not in a standard location. Screenshots and `smoke-report.json` go to `docs/screenshots` by default. Add `?debug` to the URL to expose the game object as `window.ballborn` for automation.
 

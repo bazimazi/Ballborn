@@ -181,6 +181,19 @@ A four-way review (simulation and feel, input and touch, game flow and saves, re
   - PNG home-screen icons.
   - Cached gradients and batched particle draws (no profiling showed them as the bottleneck on desktop; check on a low-end phone first).
 
+## Play pass two: UI, feel, and balance (2026-11-14) - done
+
+Played in the browser through Playwright: a scripted player pressing real keys played the tutorial, full routes, every elite type, and the Colossus, and every screen was captured and reviewed. Findings and numbers are in `design-and-tuning.md` ("Play pass two"); regression tests are in `tests/playpass.test.ts`.
+
+- **Balance:** ram damage grows with mass^0.65 (heavy was about five light cores); light core gets crits and a softer impact cut; glance recoil ×0.65; the elite Furnace Knight is thinner.
+- **Gameplay:** White Hot at a ×5 combo (every ram clean, +25%, folds shields); shields turn slowly and their guard breaks for 1.5 s; a rolling ball climbs low ledges; the Colossus has shutters between attacks, punish windows after them, a hop-over shockwave attack, and is no longer a combo farm.
+- **Defect:** a challenge room with nothing to break (Speed Lane) graded at 0.0 s.
+- **Camera:** closer (about 15%), easing out with speed; vertical framing hangs off the floor line so fights stay above the bottom HUD.
+- **Animation:** walkers squash on each footfall, shooters rear up before a shot, hounds crouch before a charge; a White Hot aura with flame tongues; the boss rears before a shockwave and its heart shutters open and close; the iris closes on the ball as it leaves a cleared room.
+- **Interface:** smaller, higher banners; compact in-room toasts; one-time notes for White Hot, guard breaks, and shockwaves; the combo widget's White Hot state; readable reward previews and an integrity-bar Weld card; a Rules tab in the codex; clearer reaction hints.
+- **Audio:** cues for White Hot on and off, guard breaks, and shockwaves; the score rises while White Hot.
+- Not done: a listening pass on the new cues; human playtests of the new numbers.
+
 ## Deferred, in priority order
 
 1. Human playtests with about five new players (protocol in `validation-report.md`).

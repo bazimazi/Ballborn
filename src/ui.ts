@@ -52,7 +52,7 @@ export interface RunSummary {
 
 export interface View {
   screen: Screen
-  codexTab: 'components' | 'synergies' | 'enemies' | 'achievements'
+  codexTab: 'rules' | 'components' | 'synergies' | 'enemies' | 'achievements'
   save: SaveData
   run: RunState | null
   build: CompiledBuild | null
@@ -267,7 +267,9 @@ export class Hud {
     const ratio = speed / Math.max(1, sim.stats.maxSpeed)
     const armed = ratio >= TUNE.cleanRamRatio
     this.style('speed-bar', 'width', `${(Math.min(1, ratio) * 100).toFixed(0)}%`)
-    this.toggle('speed-meter', 'armed', armed)
+    this.toggle('speed-meter', 'armed', armed && !sim.overdrive)
+    this.toggle('speed-meter', 'hot', sim.overdrive)
+    this.text('ram-tag', sim.overdrive ? 'Hot' : 'Ram')
     // Combo: a big number that pops on every link and drains between them.
     this.show('combo', sim.combo > 1)
     if (sim.combo > 1) {
@@ -275,6 +277,8 @@ export class Hud {
       if (sim.combo > this.lastCombo) this.pulse('combo', [{ transform: `scale(${1.25 + Math.min(0.4, sim.combo * 0.03)}) rotate(-4deg)` }, { transform: 'scale(1) rotate(0)' }], 300)
       this.style('combo-timer', 'width', `${(Math.max(0, sim.comboTimer / TUNE.comboWindow) * 100).toFixed(0)}%`)
       this.attr('combo', 'data-tier', sim.combo >= 10 ? '3' : sim.combo >= 6 ? '2' : '1')
+      this.toggle('combo', 'hot', sim.overdrive)
+      this.text('combo-label', sim.overdrive ? 'White hot' : 'Combo')
     }
     this.lastCombo = sim.combo
     this.text('instability-read', sim.instability > 2 ? `⚠ ${Math.round(sim.instability)}%` : '')
@@ -569,26 +573,48 @@ function settingsHtml(view: View): string {
 }
 
 const CODEX_TABS: { id: View['codexTab']; ico: IconName; word: string }[] = [
+  { id: 'rules', ico: 'book', word: 'Rules' },
   { id: 'components', ico: 'wrench', word: 'Parts' },
   { id: 'synergies', ico: 'link', word: 'Reactions' },
   { id: 'enemies', ico: 'target', word: 'Constructs' },
   { id: 'achievements', ico: 'trophy', word: 'Feats' },
 ]
 
+/** The game's rules in one place: what a new player needs, with the numbers behind them. */
+const RULES: { ico: IconName; title: string; text: string; numbers?: string; color: string }[] = [
+  { ico: 'gauge', title: 'Speed is damage', color: '#ffb347', text: 'A ram hurts by how fast you close in and how heavy the ball is. The ring around the ball is your speed.', numbers: 'Heavy cores hit harder; light cores arrive sooner and crit more.' },
+  { ico: 'check', title: 'Clean ram', color: '#5cf2c2', text: 'Past the notch on the ring, a ram is clean: it costs you nothing. A ram that breaks a construct is always clean.', numbers: `Clean at ${Math.round(TUNE.cleanRamRatio * 100)}% of top speed.` },
+  { ico: 'warning', title: 'Glance', color: '#ff8a7a', text: 'A slow bump glances and kicks back some of the construct’s weight as recoil. Back off, build speed, come again.' },
+  { ico: 'impact', title: 'Plow through', color: '#ffd27a', text: 'A clean ram that breaks a construct keeps most of your speed: a fast ball can carry through a whole line.', numbers: `Keeps ${Math.round(TUNE.plowKeepMin * 100)}-${Math.round(TUNE.plowKeepMax * 100)}% of its speed.` },
+  { ico: 'flame', title: 'White hot', color: '#ffcf70', text: 'Chain hits and kills without a gap and the ball ignites. While the chain holds, every ram is clean, hits harder, and folds shields.', numbers: `At a ×${TUNE.overdriveCombo} combo: +${Math.round((TUNE.overdriveDamage - 1) * 100)}% damage.` },
+  { ico: 'shield', title: 'Guard break', color: '#9ad7ff', text: 'Shields face you and turn slowly. Come down on the crown, hit from behind before it turns, or ram hard enough to fold it: the guard drops and the next rams land.', numbers: `Guard down for ${TUNE.guardBreak} s; a shield takes ${TUNE.shieldTurn} s to turn.` },
+  { ico: 'hop', title: 'Hop, float, wall kick', color: '#7fe8ff', text: 'Hold hop in the air to float. Press hop as you touch a wall in the air to kick off it. A rolling ball climbs low ledges by itself.' },
+  { ico: 'bolt', title: 'Ability', color: '#7fe8ff', text: 'Dash, slam, burst, or magnet. A ram kill winds the cooldown back by almost half: aggression feeds the next one.' },
+  { ico: 'colossus', title: 'The Colossus', color: '#ff4d6a', text: 'Crack the rivets first. Then the heart opens, but its shutters turn rams between attacks. Dodge the attack, then punish the green window. Hop the shockwaves.' },
+  { ico: 'flame', title: 'Slag', color: '#ff6a2a', text: 'Slag burns and spits you back up. It only wins if you stay in it. Constructs that fall in melt.' },
+]
+
 function codexHtml(view: View): string {
   const tab = view.codexTab
   const sv = view.save
-  const counts: Record<View['codexTab'], [number, number]> = {
+  const counts: Record<View['codexTab'], [number, number] | null> = {
+    rules: null,
     components: [COMPONENTS.filter((c) => (c.pool === 'standard' ? sv.unlocked.includes(c.id) : sv.discoveredComponents.includes(c.id))).length, COMPONENTS.length],
     synergies: [SYNERGIES.filter((s) => sv.discoveredSynergies.includes(s.id)).length, SYNERGIES.length],
     enemies: [ENEMIES.filter((e) => sv.discoveredEnemies.includes(e.id)).length, ENEMIES.length],
     achievements: [ACHIEVEMENTS.filter((a) => sv.achievements[a.id]?.done).length, ACHIEVEMENTS.length],
   }
   const tabs = CODEX_TABS.map((t) =>
-    `<button class="btn tab ${tab === t.id ? 'on' : ''}" data-act="tab" data-arg="${t.id}" aria-pressed="${tab === t.id}">${svg(t.ico, 20)}<span>${t.word}</span><small class="tab-count">${counts[t.id][0]}/${counts[t.id][1]}</small></button>`,
+    `<button class="btn tab ${tab === t.id ? 'on' : ''}" data-act="tab" data-arg="${t.id}" aria-pressed="${tab === t.id}">${svg(t.ico, 20)}<span>${t.word}</span>${counts[t.id] ? `<small class="tab-count">${counts[t.id]![0]}/${counts[t.id]![1]}</small>` : ''}</button>`,
   ).join('')
   let body = ''
-  if (tab === 'components') {
+  if (tab === 'rules') {
+    body = `<div class="grid rules">${RULES.map((r) => `<article class="codex-card rule" style="--accent:${r.color}">
+      <div class="cc-head"><span class="rule-ico">${svg(r.ico, 22)}</span><h3>${esc(r.title)}</h3></div>
+      <p class="desc">${esc(r.text)}</p>
+      ${r.numbers ? `<p class="small muted rule-num">${esc(r.numbers)}</p>` : ''}
+    </article>`).join('')}</div>`
+  } else if (tab === 'components') {
     body = `<div class="grid">${COMPONENTS.map((c) => {
       const standard = c.pool === 'standard'
       const unlocked = view.save.unlocked.includes(c.id)
@@ -865,7 +891,7 @@ function offerCard(o: Offer, i: number, view: View): string {
   const amount = o.kind === 'heal' ? `${svg('heart', 22)} +${o.amount}` : o.kind === 'cinders' ? `${icon('currency-cinders', 22)} +${o.amount}` : o.kind === 'reroll' ? `${svg('dice', 22)} +${o.amount}` : o.kind === 'ember' ? `${icon('currency-embers', 22)} +${o.amount}` : ''
   const tradeoff = o.kind === 'component' && o.bars?.some((b) => b.next < b.current - 0.02) && o.bars?.some((b) => b.next > b.current + 0.02)
   const art = o.slot ? `slot-${o.slot}` : o.kind === 'cinders' ? 'currency-cinders' : o.kind === 'ember' ? 'currency-embers' : o.kind === 'heal' ? 'core-balanced' : 'slot-passive'
-  const bigArt = o.kind === 'heal' ? svg('heart', 56) : o.kind === 'reroll' ? svg('dice', 56) : icon(art, 64)
+  const bigArt = o.kind === 'heal' ? healArt(o.amount ?? 0, view) : o.kind === 'reroll' ? svg('dice', 56) : icon(art, 64)
   const chips = [
     ...(o.gained ?? []).map((g) => `<span class="tag up">${svg('link', 14)}${esc(g)}</span>`),
     ...(o.lost ?? []).map((l) => `<span class="tag down">${svg('unlink', 14)}${esc(l)}</span>`),
@@ -899,6 +925,21 @@ function offerCard(o: Offer, i: number, view: View): string {
     </div>
     <button class="btn primary take" data-act="offer" data-arg="${i}" ${i === 0 ? 'data-autofocus' : ''} aria-label="Take ${esc(o.title)}">${svg('check', 20)}<span>Take</span></button>
   </article>`
+}
+
+/** A weld shown as what it does: the integrity bar now, and the part it fills back in. */
+function healArt(amount: number, view: View): string {
+  const max = view.build?.stats.maxHp ?? 100
+  const cur = Math.min(max, view.run?.hp ?? max)
+  const after = Math.min(max, cur + amount)
+  const a = (cur / max) * 100
+  const b = (after / max) * 100
+  const whole = cur >= max - 0.5
+  return `<span class="heal-art${whole ? ' whole' : ''}">
+    <span class="heal-heart">${svg('heart', 44)}</span>
+    <span class="heal-bar"><i style="width:${a.toFixed(1)}%"></i><em style="left:${a.toFixed(1)}%;width:${(b - a).toFixed(1)}%"></em></span>
+    <span class="heal-nums">${whole ? 'Already whole' : `${Math.ceil(cur)} <span class="arrow">→</span> <b>${Math.ceil(after)}</b> <span class="muted">/ ${Math.ceil(max)}</span>`}</span>
+  </span>`
 }
 
 function shopIcon(item: ShopItem, size = 40): string {

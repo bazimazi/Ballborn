@@ -90,7 +90,9 @@ describe('representative build profiles', () => {
     const heavy = table.heavy!
     const light = table.light!
     const rebound = table.rebound!
-    expect(heavy.ram).toBeGreaterThan(light.ram * 1.5)
+    // Ram damage grows with mass^0.65 (TUNE.massImpactExp), not linearly: heavy still rams clearly
+    // harder than a light build that carries Spiked Shell's contact damage, without the old 5x gulf.
+    expect(heavy.ram).toBeGreaterThan(light.ram * 1.3)
     expect(light.toSpeed).toBeLessThan(heavy.toSpeed)
     expect(light.hop).toBeGreaterThan(heavy.hop * 1.3)
     expect(rebound.bounce).toBeGreaterThan(heavy.bounce + 0.2)

@@ -45,7 +45,7 @@ export const COMPONENTS: ComponentDef[] = deepFreeze([
     downside: 'Sluggish acceleration, a short hop, and weak air control.',
     modifiers: [
       mul('mass', 2.25), mul('gravity', 1.16), mul('accel', 0.94), mul('maxSpeed', 0.74),
-      mul('airControl', 0.7), mul('hop', 0.9), mul('impact', 1.5), add('maxHp', 36),
+      mul('airControl', 0.7), mul('hop', 0.9), mul('impact', 1.45), add('maxHp', 36),
       mul('knockback', 1.4), mul('friction', 1.15),
     ],
     effects: [],
@@ -55,11 +55,11 @@ export const COMPONENTS: ComponentDef[] = deepFreeze([
     id: 'light-core', name: 'Light Core', slot: 'core', rarity: 'uncommon', pool: 'standard',
     tags: ['light', 'movement'], startsUnlocked: true, unlockCost: 0,
     description: 'Hollowed alloy. The ball snaps to speed and can climb on air thrust alone.',
-    upside: 'Immediate acceleration, a high hop, and real airtime.',
-    downside: 'Collisions glance. Integrity is thin.',
+    upside: 'Immediate acceleration, a high hop, real airtime, and fast hits that find the seams (crits).',
+    downside: 'Each ram is lighter. Integrity is thin.',
     modifiers: [
       mul('mass', 0.55), mul('gravity', 0.82), mul('accel', 1.12), mul('maxSpeed', 1.26),
-      mul('airControl', 1.28), mul('hop', 1.06), mul('airThrust', 1.12), mul('impact', 0.72),
+      mul('airControl', 1.28), mul('hop', 1.06), mul('airThrust', 1.12), mul('impact', 0.86), add('critChance', 0.1),
       add('maxHp', -16), mul('selfDamage', 1.12), mul('friction', 0.82),
     ],
     effects: [],

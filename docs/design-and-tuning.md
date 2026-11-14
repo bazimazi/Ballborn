@@ -35,8 +35,10 @@ One pipeline (`Simulation.hurt`, rules in `src/data/damage.ts`), in this order: 
 ## Rams
 
 - **Clean ram:** closing speed at least 55% of your top speed (the notch on the speed ring), or a ram that breaks the construct, and not blocked by a shield. Clean rams take no recoil, show `CLEAN`, and play a heavier impact.
-- **Glance:** anything slower. Recoil is the construct's contact damage × your recoil stat × (1 − damage dealt / 48), at least 25%.
-- **Shield block:** a frontal ram under the shield's break value deals 18% and takes 40% of the recoil. Hits from above pass.
+- **Ram damage:** mass^0.65 × closing speed × 0.03 × impact × combo (`TUNE.massImpactExp`). It was linear in mass, which made a heavy core about five times a light one; now heavy is about 1.7× and light about 0.75× a balanced core at the same share of top speed.
+- **Glance:** anything slower. Recoil is the construct's contact damage × your recoil stat × (1 − damage dealt / 48), at least 25%, × 0.65 (`TUNE.recoilScale`; it was × 1, and a light build died to recoil alone in its first elite room).
+- **Shield block:** a frontal ram under the shield's break value deals 18% and takes 40% of the recoil. A shield needs 0.5 s (the knight 0.625 s) to turn after the ball crosses over it. A crown hit, a ram from behind, or a ram past the break value **breaks the guard** for 1.5 s: frontal rams land in full until it is back up (`TUNE.shieldTurn`, `TUNE.guardBreak`).
+- **White Hot:** at a ×5 combo (`TUNE.overdriveCombo`), while the chain holds, every ram is clean, deals 125%, and folds shields. The combo step is 6% per link (was 8%).
 - **Armor:** rams under the armor gate are multiplied down; the number shows `ARMOR`.
 - Decision: a well-executed attack avoids retaliation completely. This rewards steering for every build rather than only heavy ones.
 - **Plow-through:** a clean ram that breaks the construct undoes the collision bounce and keeps `clamp(1 − (construct mass / ball mass) × 0.09, 0.62, 0.90)` of the ball's velocity (`TUNE.plowDrag`, `plowKeepMin`, `plowKeepMax`). Before this, every kill bounced the ball back, so a fast ball could never carry a run through a line of constructs. A ram that does not kill still rebounds.
@@ -63,13 +65,17 @@ All effect targeting goes through one list of targets (constructs, the Colossus 
 
 | Rule | Value |
 | --- | --- |
+| Integrity | 1,050 (was 940) |
 | Phase one plate: body damage that gets through, all sources | 38% |
+| Phases two and three, between attacks (shutters closed) | 50% |
+| Punish window after a stamp / shockwave / barrage (green ring) | 0.9 s / 1.05 s / 0.6 s, body damage 130% |
+| Shockwave (phases two and three) | 0.75 s wind-up (the body rears, chevrons run along the floor); a crest 34 px high at 550-610 px/s; 14-18 damage; any hop clears it; phase three sends a second one 0.6 s later |
+| Combo from the Colossus | only hits inside a punish window, at most one link per 0.7 s (it stands still; it was a combo farm) |
 | Rivets | full damage from rams, blasts, arcs, and burns; 70 integrity each; each break costs the Colossus 40 |
 | Burn on the boss or rivets | 60% |
 | Other effect damage | 80% |
 | Explosions | 65% |
 | Reflected shot bonus | +6 |
-| Body damage while stuck after a stamp (0.9 s, green ring) | 130% |
 | Stamp telegraph | 0.7 s red band and chevrons |
 | Barrage telegraph | 0.45 s flashing port |
 | Phase three floor collapse warning | 1.8 s: pulsing floor, countdown text, alarm |
@@ -78,16 +84,18 @@ Phases: 1, crack the rivets (the objective line counts them); 2, the heart opens
 
 One ram at 80% of top speed into the open heart, then three seconds of after-effects (`tests/boss.test.ts`):
 
+Measured inside a punish window:
+
 | Build | Ram | After 3 s | Extra sources |
 | --- | --- | --- | --- |
-| balanced | 51 | 51 | none |
-| heavy | 104 | 104 | none |
-| light | 19 | 19 | none |
-| rebound | 37 | 37 | none |
-| fire | 35 | 58 | burn 24, effects 10 |
-| magnetic | 35 | 35 | arcs 13 |
+| balanced | 70 | 70 | none |
+| heavy | 111 | 111 | none |
+| light | 31 | 31 | none |
+| rebound | 50 | 50 | none |
+| fire | 50 | 78 | burn 28, effects 15 |
+| magnetic | 47 | 47 | arcs 18 |
 
-Every representative build damages the heart. Light builds need many clean rams (about 33 at this rate for 940 integrity at Heat 0; it was 860 before the route grew from five rooms to seven), which is the intended weakness; they have the speed and hop to get them. This is a measured estimate, not a playtested kill time.
+Every representative build damages the heart. A bot that rams well and hops the shockwaves took about 31 s and lost about half its integrity with a starter build (before this pass: 16 s and a fifth, because every body hit stacked the combo and the heart took full damage at any time). A person should expect a minute or more.
 
 ## Representative build profiles
 
@@ -95,14 +103,14 @@ Measured in a flat test room with the real simulation. Builds are listed in `tes
 
 | Build | Top speed | To 90% (s) | Turn-around distance (px) | Hop height (px) | Bounce kept | Ram on a plate | Dash launch |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| balanced | 924 | 0.88 | 222 | 152 | 71% | 34 | 1018 |
-| heavy | 615 | 0.89 | 133 | 61 | 2% | 77 | - |
-| light | 953 | 0.35 | 112 | 341 | 3% | 35 | 1251 |
-| rebound | 840 | 0.80 | 241 | 140 | 97% | 23 | 1016 |
+| balanced | 924 | 0.64 | 222 | 154 | 71% | 34 | 1018 |
+| heavy | 615 | 0.89 | 133 | 61 | 2% | 56 | - |
+| light | 953 | 0.35 | 112 | 341 | 3% | 41 | 1251 |
+| rebound | 840 | 0.68 | 184 | 145 | 89% | 26 | 1016 |
 | fire | 924 | 0.63 | 173 | 159 | 10% | 24 | 1018 |
-| magnetic | 924 | 1.18 | 254 | 133 | 71% | 7 | - |
+| magnetic | 924 | 0.74 | 254 | 135 | 71% | 7 | - |
 
-Reading it: heavy rams more than twice as hard as light and cannot hop more than a 61 px step, so every required route has a floor path (the heavy build crosses the revised Swarm Loft and escapes every slag pool in tests). Light reaches speed in a third of the time and hops over 300 px. Rebound keeps almost all of its bounce. Magnetic's Lightning Impact is grounded by Iron Plates (7), as designed; its answer to plates is Magnet Pull. These are tuning facts, not balance verdicts; see the open questions below.
+Reading it: heavy rams clearly harder than light (the light build here carries Spiked Shell's contact damage) and cannot hop more than a 61 px step, though a rolling ball now climbs ledges up to 40 px by itself, so every required route has a floor path (the heavy build crosses the revised Swarm Loft and escapes every slag pool in tests). Light reaches speed in a third of the time and hops over 300 px. Rebound keeps almost all of its bounce. Magnetic's Lightning Impact is grounded by Iron Plates (7), as designed; its answer to plates is Magnet Pull. These are tuning facts, not balance verdicts; see the open questions below.
 
 ## Economy
 
@@ -224,6 +232,22 @@ Research input: Celeste's forgiveness write-up, Vlambeer's "Art of Screenshake",
 | Music | 116 bpm rooms, 128 bpm boss (+6 per phase), 78 bpm menu; layers by intensity: bass > 0.12, anvil > 0.25, hats > 0.3, four-on-the-floor > 0.55, sixteenth hats > 0.62, arpeggio > 0.66 | Kills duck the music 30% for 60 ms, phases 70% |
 
 New rooms: **Hound Kennel** (combat; two hounds, a slag gap with a stepping plate) and **Charge Yard** (elite; an elite hound, a bolt, a grunt). New achievements: Matador, Perfect Pour, Daily Smith.
+
+## Play pass two (November 14, 2026)
+
+Played in the browser with a scripted player that presses real keys (run-ups, hops, crown hits, vaults, shockwave hops), then measured with the simulation. What it found, and what changed:
+
+| Found in play | Change | Numbers |
+| --- | --- | --- |
+| A heavy core one-shot almost everything; a light core needed three rams per grunt and died to recoil in its first elite room | Ram damage grows with mass^0.65; light core impact ×0.86 (was ×0.72) and +10% crit; heavy core impact ×1.45 (was ×1.5); glance recoil ×0.65 | Per ram at 80% speed against a balanced core: heavy 1.65× (was 2.4×), light 0.73× (was 0.55×) |
+| A rolling ball bonked backward off every low step, turret mount, and bridge lip (a rubber shell bounced away) | A grounded ball climbs a ledge up to 40 px, keeping 93% of its speed | `TUNE.stepUp`, `TUNE.stepKeep` |
+| Shields always faced the ball: only a crown hit worked, and the elite Furnace Knight had 403 integrity | Shields turn slowly; crown hits, back hits, and folding rams break the guard for 1.5 s; the knight's base integrity 200 (was 250) | `TUNE.shieldTurn` 0.5 s, `TUNE.guardBreak` 1.5 s |
+| The Colossus fell in 16 s: every body hit added to the combo, and the open heart took full damage at any time | Shutters between attacks (50%), punish windows after each attack (130%), the shockwave attack, combo only from punishes, integrity 1,050 | See the Colossus table |
+| Fights had no peak beyond a kill | White Hot at a ×5 combo: every ram clean, 125% damage, folds shields | Combo step 6% (was 8%) |
+| The ball and constructs were small on screen; with the ball on a spring the floor fight slid under the bottom HUD | Camera 1.3× at rest easing to 1.06× at speed (was 1.13× to 0.94×); vertical framing hangs off the floor line | Shooters open fire within 720 px (was 860), about the visible half-width |
+| The Speed Lane (a challenge with no constructs) graded every run at 0.0 s, an automatic S | Rooms with nothing to break are graded on the run to the exit | `tests/playpass.test.ts` |
+| Room banners, toasts, and the tutorial prompt covered the playfield | Banners sit high and narrow (only the boss intro is central); in-room toasts are small, two at most; the prompt waits for the banner | |
+| Reward previews drew the ball about 5 px wide | The preview follows the new ball at 120 world px tall, over a floor marked every 100 px; the Weld card shows the integrity bar before and after | |
 
 ## Open tuning questions for playtests
 

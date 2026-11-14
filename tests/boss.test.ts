@@ -8,6 +8,8 @@ function bossRoom(name: keyof typeof BUILDS, phase: 1 | 2 = 2) {
   if (phase === 2) {
     for (const r of boss.rivets) s.damageEnemy(r, 999, ['impact'], { source: 'collision', kind: 'impact' })
     expect(boss.phase).toBe(2)
+    // The damage plan is measured inside a punish window: the moment after an attack when the shutters are open.
+    boss.recover = 10
   }
   for (const e of s.enemies) e.alive = false
   return s
@@ -71,6 +73,63 @@ describe('the Colossus meets every build through the shared target rules', () =>
     console.log(`Colossus, phase two, one ram at 80% top speed:\n${rows.join('\n')}`)
     expect(ramBoss('fire').bySource.status).toBeGreaterThan(0)
     expect(ramBoss('magnetic').bySource.effect).toBeGreaterThan(0)
+  })
+
+  it('phases two and three: the heart is guarded between attacks, and every attack opens a punish window', () => {
+    const s = bossRoom('balanced')
+    const boss = s.boss!
+    boss.recover = 0
+    let before = boss.hp
+    s.damageEnemy(boss, 100, ['impact'], { source: 'collision', kind: 'impact' })
+    expect(before - boss.hp).toBeCloseTo(100 * BOSS_RULES.guarded, 5)
+    boss.recover = 0.5
+    before = boss.hp
+    s.damageEnemy(boss, 100, ['impact'], { source: 'collision', kind: 'impact' })
+    expect(before - boss.hp).toBeCloseTo(100 * BOSS_RULES.recovering, 5)
+    // Run the fight with an idle ball: every finished attack opens a window.
+    boss.recover = 0
+    s.hp = s.maxHp = 1e6
+    const seen = new Set<string>()
+    let windows = 0
+    let was = false
+    for (let i = 0; i < seconds(40); i++) {
+      if (boss.attack !== 'none') seen.add(boss.attack)
+      s.step(input())
+      if (boss.recover > 0 && !was) windows++
+      was = boss.recover > 0
+    }
+    expect(seen.has('wave')).toBe(true)
+    expect(windows).toBeGreaterThanOrEqual(seen.size)
+  })
+
+  it('a shockwave catches a ball on the floor and is cleared by any hop', () => {
+    const s = bossRoom('heavy')
+    const boss = s.boss!
+    boss.attackCd = 99
+    s.ball.x = 600
+    s.ball.y = 608 - s.ball.r
+    s.shocks.push({ x: 700, y: 608, dir: -1, speed: 560, life: 4, damage: 14, hit: false })
+    const hp = s.hp
+    run(s, seconds(0.4))
+    expect(s.hp).toBeLessThan(hp)
+    const h = bossRoom('heavy')
+    h.boss!.attackCd = 99
+    h.ball.x = 600
+    h.ball.y = 608 - h.ball.r
+    run(h, seconds(0.3))
+    h.shocks.push({ x: 760, y: 608, dir: -1, speed: 560, life: 4, damage: 14, hit: false })
+    const hp2 = h.hp
+    // A heavy ball's short hop, pressed as the crest comes within reach.
+    let pressed = false
+    run(h, seconds(0.6), () => {
+      const w = h.shocks[0]
+      if (!pressed && w && w.x - h.ball.x < 90) {
+        pressed = true
+        return { hopPressed: true, hopHeld: true }
+      }
+      return {}
+    })
+    expect(h.hp).toBe(hp2)
   })
 
   it('the collapse warning runs its full length before terrain changes', () => {

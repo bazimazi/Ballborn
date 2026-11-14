@@ -393,6 +393,12 @@ h1, h2, .word {
 .speed-meter.armed svg.i { color: var(--mint); }
 .speed-meter.armed #speed-bar { background: linear-gradient(90deg, #1fae84, var(--mint) 70%, #d6fff1); box-shadow: 0 0 12px rgba(92, 242, 194, 0.8); }
 .speed-meter.armed .ram-tag { color: #04140f; background: var(--mint); border-color: var(--mint); }
+/* White Hot: every ram is clean whatever the speed, so the meter says HOT in the chain's colour. */
+.speed-meter.hot { color: var(--gold); border-color: rgba(255, 200, 100, 0.55); box-shadow: 0 0 22px -4px rgba(255, 180, 80, 0.7); }
+.speed-meter.hot svg.i { color: var(--gold); }
+.speed-meter.hot #speed-bar { background: linear-gradient(90deg, #ff7a2e, var(--gold) 70%, #fff1c2); box-shadow: 0 0 12px rgba(255, 190, 90, 0.85); }
+.speed-meter.hot .ram-tag { color: #1a0a03; background: var(--gold); border-color: var(--gold); }
+body.reduce-motion .combo.hot .combo-label { animation: none; }
 .objective { display: flex; flex-direction: column; align-items: center; gap: 5px; max-width: 480px; min-width: 0; }
 #room-name { font-family: var(--font-display); font-weight: 800; font-size: 1.2rem; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 #room-obj {
@@ -514,17 +520,27 @@ body.touch .speed-track { width: 140px; }
 .combo-timer { width: 104px; height: 4px; background: rgba(5, 7, 10, 0.8); margin-top: 8px; border-radius: 2px; overflow: hidden; box-shadow: 0 0 0 1px var(--hair-2); }
 #combo-timer { height: 100%; background: var(--grad-heat); box-shadow: 0 0 8px var(--molten); }
 .combo[data-tier="3"] #combo-timer { background: linear-gradient(90deg, var(--cyan), #fff); }
+/* White Hot: the chain is long enough that every ram is clean. The label says so and the number burns. */
+.combo.hot .combo-label { color: #fff1c2; letter-spacing: 0.24em; text-shadow: 0 0 12px rgba(255, 200, 90, 0.9), 0 2px 6px #000; animation: hot-label 0.5s steps(2) infinite; }
+.combo.hot b { background-image: linear-gradient(180deg, #ffffff, #fff1c2 35%, var(--gold) 65%, #ff7a2e); filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.85)) drop-shadow(0 0 26px rgba(255, 190, 80, 0.95)); }
+.combo.hot #combo-timer { background: linear-gradient(90deg, #ff7a2e, #fff1c2); box-shadow: 0 0 12px #ffb347; }
+@keyframes hot-label { 50% { opacity: 0.72; } }
 /* HUD bars fill by scaleX (set from the HUD), never by width. */
 #hp-bar, #hp-chip, #shield-bar, #boss-fill, #boss-chip, #energy-bar, #speed-bar, #combo-timer { width: 100%; right: auto; transform-origin: left center; transform: scaleX(0); will-change: transform; }
 
 /* Banners: a cinematic band that opens from the centre, and a title that slams into it. */
-.banner { position: absolute; inset: 0; display: grid; align-content: start; justify-items: center; padding-top: 24vh; pointer-events: none; z-index: 1; }
+.banner { position: absolute; inset: 0; display: grid; align-content: start; justify-items: center; padding-top: calc(max(14px, var(--sat)) + 92px); pointer-events: none; z-index: 1; }
+/* The boss intro is a cinematic and keeps the middle of the screen; every other banner sits high and narrow, off the playfield. */
+.banner:has(> .boss) { padding-top: 22vh; }
+/* In the hold, banners sit under the Colossus's health bar, never behind it. */
+#boss-bar:not([hidden]) ~ .banner { padding-top: calc(max(14px, var(--sat)) + min(142px, 26vh)); }
 .banner-inner {
   --accent: var(--amber);
-  position: relative; width: 100%; display: grid; justify-items: center; gap: 6px; text-align: center; padding: 18px 40px 20px;
-  background: linear-gradient(90deg, transparent, rgba(7, 9, 13, 0.82) 22%, rgba(7, 9, 13, 0.82) 78%, transparent);
+  position: relative; width: min(760px, 92%); display: grid; justify-items: center; gap: 4px; text-align: center; padding: 12px 40px 14px;
+  background: linear-gradient(90deg, transparent, rgba(7, 9, 13, 0.78) 18%, rgba(7, 9, 13, 0.78) 82%, transparent);
   animation: band 2.4s var(--ease-out) forwards;
 }
+.banner-inner.boss { width: 100%; }
 .banner-inner::before, .banner-inner::after {
   content: ""; position: absolute; left: 12%; right: 12%; height: 1px;
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
@@ -540,11 +556,13 @@ body.touch .speed-track { width: 140px; }
 .banner-inner.boss { --accent: var(--bad); animation-duration: 3.2s; padding: 22px 40px 26px; background: linear-gradient(90deg, transparent, rgba(30, 4, 10, 0.85) 20%, rgba(30, 4, 10, 0.85) 80%, transparent); }
 .banner-inner.boss::before, .banner-inner.boss::after { animation-duration: 3.2s; }
 .banner-title {
-  font-family: var(--font-display); font-weight: 800; font-size: clamp(1.9rem, 5vw, 3.8rem); letter-spacing: -0.035em; line-height: 1;
+  font-family: var(--font-display); font-weight: 800; font-size: clamp(1.5rem, 3.4vw, 2.6rem); letter-spacing: -0.03em; line-height: 1;
   text-shadow: 0 4px 0 rgba(0, 0, 0, 0.7), 0 0 30px rgba(0, 0, 0, 0.6);
   animation: slam 2.4s var(--ease-snap) forwards;
 }
-.banner-sub { color: var(--muted); font-size: 0.98rem; font-weight: 600; letter-spacing: 0.02em; max-width: 52ch; animation: sub-in 2.4s var(--ease-out) forwards; }
+.banner-sub { color: var(--muted); font-size: 0.9rem; font-weight: 600; letter-spacing: 0.02em; max-width: 56ch; animation: sub-in 2.4s var(--ease-out) forwards; }
+.banner-inner.clear, .banner-inner.phase { padding: 8px 36px 10px; }
+.banner-inner.clear .banner-title, .banner-inner.phase .banner-title { font-size: clamp(1.3rem, 2.8vw, 2.1rem); }
 .banner-inner.clear .banner-title { color: var(--mint); text-shadow: 0 4px 0 rgba(0, 0, 0, 0.7), 0 0 30px rgba(92, 242, 194, 0.45); }
 .banner-inner.clear .banner-title, .banner-inner.clear .banner-sub, .banner-inner.phase .banner-title { animation-duration: 1.6s; }
 .banner-inner.phase .banner-title { color: #ff8a9a; }
@@ -574,13 +592,15 @@ body.touch .speed-track { width: 140px; }
 @keyframes letterbox { 0% { transform: scaleY(0); } 12% { transform: scaleY(1); } 82% { transform: scaleY(1); } 100% { transform: scaleY(0); } }
 
 .prompt {
-  position: absolute; left: 50%; top: calc(max(14px, var(--sat)) + 88px); transform: translateX(-50%); z-index: 2;
+  position: absolute; left: 50%; top: calc(max(14px, var(--sat)) + 88px); transform: translateX(-50%); z-index: 2; transition: opacity 200ms;
   background: rgba(10, 12, 18, 0.88); border: 1px solid var(--hair-hot); border-radius: 999px; padding: 9px 20px; max-width: 80vw; text-align: center;
   font-weight: 700; font-size: 1.02rem; width: max-content;
   box-shadow: 0 12px 30px rgba(0,0,0,0.5), 0 0 24px -8px rgba(255, 138, 61, 0.5);
   animation: prompt-in 320ms var(--ease-back);
 }
 @keyframes prompt-in { from { opacity: 0; transform: translate(-50%, -8px) scale(0.95); } }
+/* A banner and the tutorial prompt never stack: the prompt waits for the banner to go. */
+.banner:not(:empty) ~ .prompt { opacity: 0; }
 .sheet {
   position: absolute; top: calc(max(14px, var(--sat)) + 64px); right: max(16px, var(--sar)); width: min(380px, 92vw); z-index: 3;
   background: linear-gradient(180deg, rgba(26, 31, 43, 0.95), rgba(10, 12, 18, 0.96)); border: 1px solid var(--hair-2); border-radius: var(--r-xl);
@@ -856,7 +876,20 @@ select { background: var(--ink-2); border: 1px solid var(--hair-2); padding: 8px
 .art-big { position: absolute; inset: 0; display: grid; place-items: center; color: color-mix(in srgb, var(--rarity) 60%, #fff); }
 .art-big > * { filter: drop-shadow(0 0 22px color-mix(in srgb, var(--rarity) 60%, transparent)) drop-shadow(0 8px 10px rgba(0, 0, 0, 0.6)); animation: art-float 4s ease-in-out infinite; }
 .card.kind-heal { --rarity: #ff6a7d; }
-.card.kind-heal .art-big { color: #ff6a7d; }
+.card.kind-heal .art-big { color: #ff6a7d; width: 100%; }
+.heal-art { display: grid; justify-items: center; gap: 10px; width: min(86%, 260px); }
+.heal-heart { filter: drop-shadow(0 0 18px rgba(255, 106, 125, 0.65)); animation: heart-beat 1.2s var(--ease-out) infinite; }
+.heal-bar { position: relative; width: 100%; height: 12px; border-radius: 999px; background: rgba(5, 7, 10, 0.85); box-shadow: 0 0 0 1px var(--hair-2), inset 0 1px 2px rgba(0, 0, 0, 0.6); overflow: hidden; }
+.heal-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #ff5a1f, #ff8a3d 60%, #ffd27a); }
+.heal-bar em { position: absolute; top: 0; bottom: 0; background: linear-gradient(90deg, #5cf2c2, #b8ffe6); box-shadow: 0 0 14px #5cf2c2; animation: heal-glow 1.2s ease-in-out infinite; }
+.heal-nums { font-weight: 800; font-size: 1.05rem; color: var(--text); font-variant-numeric: tabular-nums; }
+.heal-nums b { color: var(--mint); }
+.heal-nums .arrow { color: var(--dim); }
+.heal-art.whole { opacity: 0.6; }
+.heal-art.whole .heal-heart { animation: none; }
+@keyframes heart-beat { 0%, 100% { transform: scale(1); } 14% { transform: scale(1.14); } 28% { transform: scale(1); } 42% { transform: scale(1.08); } }
+@keyframes heal-glow { 50% { opacity: 0.6; } }
+body.reduce-motion .heal-heart, body.reduce-motion .heal-bar em { animation: none; }
 .card.kind-cinders, .card.kind-reroll { --rarity: var(--amber); }
 .card.kind-ember { --rarity: var(--ember); }
 @keyframes art-float { 50% { transform: translateY(-5px) scale(1.04); } }
@@ -1305,7 +1338,7 @@ select { background: var(--ink-2); border: 1px solid var(--hair-2); padding: 8px
 .progress { height: 6px; background: rgba(255, 255, 255, 0.06); border-radius: 3px; overflow: hidden; }
 .progress i { display: block; height: 100%; border-radius: 3px; background: var(--grad-heat); }
 .codex-card.done .progress i { background: var(--mint); box-shadow: 0 0 8px var(--mint); }
-.tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px; border-radius: 14px; background: rgba(5, 7, 10, 0.6); border: 1px solid var(--hair); }
+.tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; padding: 4px; border-radius: 14px; background: rgba(5, 7, 10, 0.6); border: 1px solid var(--hair); }
 .tab { justify-content: center; gap: 8px; border: 0; background: transparent; box-shadow: none; border-radius: 10px; min-height: 44px; color: var(--muted); }
 .tab svg.i { color: var(--dim); }
 .tab-count { font: 700 0.66rem/1 var(--font-mono); color: var(--dim); padding: 3px 6px; border-radius: 6px; background: rgba(255, 255, 255, 0.05); }
@@ -1374,6 +1407,10 @@ body[data-screen^="lab"] .hud-top .meter, body[data-screen^="lab"] .hud-top .obj
 /* ---------------------------------------------------------------------------
    Toasts: sleek pills that slide in from the right, colour-coded by what they are about. */
 #toasts { position: absolute; inset: calc(max(14px, var(--sat)) + 66px) max(16px, var(--sar)) auto auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; width: min(400px, 60vw); z-index: 4; }
+/* In a room, notes stay small and only the latest two show: the playfield is not a notice board. */
+body[data-screen="play"] #toasts { gap: 4px; }
+body[data-screen="play"] .toast { font-size: 0.8rem; padding-top: 3px; padding-bottom: 3px; opacity: 0.92; }
+body[data-screen="play"] .toast:nth-last-child(n+3) { display: none; }
 .toast {
   --accent: var(--muted);
   pointer-events: none; position: relative; overflow: hidden;
@@ -1398,6 +1435,10 @@ body[data-screen^="lab"] .hud-top .meter, body[data-screen^="lab"] .hud-top .obj
 .toast.ember { --accent: var(--ember); }
 .toast.part { --accent: var(--mint); }
 .toast.close { --accent: var(--bad); }
+/* One-time mechanic notes: they stay longer and stay visible in a room. */
+.toast.tip { --accent: var(--gold); color: #fff3d6; border-color: rgba(255, 210, 122, 0.45); }
+.toast.tip::after { animation-duration: 5.2s; }
+body[data-screen="play"] .toast.tip { display: flex !important; font-size: 0.86rem; }
 @keyframes toast {
   0% { opacity: 0; transform: translateX(60px) scale(0.92); }
   7% { opacity: 1; transform: translateX(-4px) scale(1); }
@@ -1806,3 +1847,8 @@ body.build-open #toasts { visibility: hidden; }
   .heat-list { display: flex; flex-wrap: wrap; gap: 2px 12px; padding: 0; list-style: none; font-size: 0.74rem; }
   .heat-list li::before { content: "•"; color: var(--molten); margin-right: 5px; }
 }
+
+/* Codex rules: one card per rule, an accent edge and a round icon in the rule's colour. */
+.codex-card.rule { border-left: 3px solid color-mix(in srgb, var(--accent) 70%, transparent); }
+.rule-ico { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; flex: none; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent), 0 0 18px -6px var(--accent); }
+.rule-num { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0; color: color-mix(in srgb, var(--accent) 60%, var(--muted)); }

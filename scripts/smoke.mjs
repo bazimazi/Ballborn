@@ -432,6 +432,8 @@ try {
       s.step({ x: phase < 2 ? 1 : -1, y: 0, hopHeld: phase === 1, hopPressed: i % 97 === 0, abilityPressed: i % 180 === 0, pausePressed: false, buildPressed: false, confirmPressed: false, mx: 0, my: 0, mouseThrust: false })
       if (i % (120 * 60) === 0) samples.push({ minute: i / 7200, enemies: s.enemies.length, particles: s.particles.length, bullets: s.bullets.length, pickups: s.pickups.length, floaters: s.floaters.length })
     }
+    // Always judge the end of the soak (a short soak would otherwise only sample tick 0, right after the stress test's extra constructs).
+    samples.push({ minute: minutes, enemies: s.enemies.length, particles: s.particles.length, bullets: s.bullets.length, pickups: s.pickups.length, floaters: s.floaters.length })
     return { simMinutes: minutes, wallSeconds: (performance.now() - t0) / 1000, perTickMs: (performance.now() - t0) / ticks, heapDeltaMB: ((performance.memory?.usedJSHeapSize ?? 0) - heap0) / 1e6, samples }
   }, SOAK_MIN)
   report.soak = accel

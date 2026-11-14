@@ -67,7 +67,7 @@ export function ballRadius(mass: number): number {
 
 export function collisionDamage(stats: Stats, closingSpeed: number, comboMul: number, crit: boolean): number {
   const speed = Math.max(0, closingSpeed)
-  let d = stats.mass * speed * TUNE.impactScale * stats.impact * comboMul
+  let d = Math.pow(stats.mass, TUNE.massImpactExp) * speed * TUNE.impactScale * stats.impact * comboMul
   if (crit) d *= stats.critMul
   return d
 }
